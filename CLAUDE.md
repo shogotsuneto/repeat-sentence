@@ -26,6 +26,7 @@ CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, wasm clippy with `-D w
 - `model.rs` — pure domain types (`Settings`, `VoicePreset`, `SentenceSet`, `VoiceInfo`) and logic: `sentence_pool`, `ShuffleBag` (draw without replacement, no back-to-back repeats), `suggest_voices`, novelty-voice filtering. Randomness is injected (`FnMut() -> f64`, `js_sys::Math::random` in the app) so it's testable.
 - `sentences.rs` — built-in sentences and the import parser (`parse_lines`: one sentence per line). CSV import was dropped deliberately — only the sentence text is ever used, so plain text covers it.
 - `storage.rs` — localStorage JSON under versioned keys (`repeat-sentence.*.v1`). `Settings` is `#[serde(default)]` so added fields stay backward compatible.
+- `panic_hook.rs` — reports panics (message + JS stack) via `console.error`; replaces the archived `console_error_panic_hook` crate.
 - `ui.rs` — Tailwind class-string constants and the `Toggle` component. Styling is **Tailwind v4** via Trunk's built-in `tailwind-css` asset (version pinned in `Trunk.toml [tools]`); `@source "../src"` in `static/input.css` scans the Rust sources. Repeated utility runs are DRY'd in Rust (constants/components), not `@apply` classes.
 
 Voice presets are keyed by `voiceURI`; presets whose voice isn't available in the current browser are skipped at pick time (and flagged in the Voices tab). Recordings are blob URLs kept only in memory and revoked when cleared/superseded.

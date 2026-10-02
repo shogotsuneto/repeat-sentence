@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod library;
 mod model;
+mod panic_hook;
 mod practice;
 mod sentences;
 mod settings_tab;
@@ -10,6 +11,6 @@ mod ui;
 mod voices;
 
 fn main() {
-    console_error_panic_hook::set_once();
+    panic_hook::install();
     leptos::mount::mount_to_body(app::App);
 }
