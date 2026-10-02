@@ -1,4 +1,4 @@
-// Built-in practice sentences and the parsers for user-imported files.
+// Built-in practice sentences and the parser for user-imported text.
 
 /// Original sentences in the style of PTE Repeat Sentence items: short
 /// academic / campus-life statements of roughly 3–9 seconds when read aloud.
@@ -53,16 +53,6 @@ pub const BUILTIN: &[&str] = &[
     "Several departments have joined forces to launch a new interdisciplinary program.",
 ];
 
-/// Parses an imported file, choosing the format by extension: `.csv` goes
-/// through the CSV parser, anything else is one sentence per line.
-pub fn parse_file(file_name: &str, content: &str) -> Result<Vec<String>, String> {
-    if file_name.to_ascii_lowercase().ends_with(".csv") {
-        parse_csv(content)
-    } else {
-        Ok(parse_lines(content))
-    }
-}
-
 /// One sentence per line. Blank lines and `#` comments are skipped.
 pub fn parse_lines(content: &str) -> Vec<String> {
     dedupe(
@@ -74,61 +64,11 @@ pub fn parse_lines(content: &str) -> Vec<String> {
     )
 }
 
-/// Header names recognized as "the sentence column".
-const HEADER_NAMES: &[&str] = &["sentence", "sentences", "text"];
-
-/// Takes the column headed `sentence` / `text` if there is one; otherwise the
-/// column with the most words per cell (so `id,sentence` without a header,
-/// or `sentence,notes`, both do the right thing).
-pub fn parse_csv(content: &str) -> Result<Vec<String>, String> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .flexible(true)
-        .trim(csv::Trim::All)
-        .from_reader(strip_bom(content).as_bytes());
-    let rows = reader
-        .records()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Invalid CSV: {e}"))?;
-
-    let header_col = rows.first().and_then(|first| {
-        first
-            .iter()
-            .position(|cell| HEADER_NAMES.contains(&cell.to_ascii_lowercase().as_str()))
-    });
-    let (col, body) = match header_col {
-        Some(col) => (col, &rows[1..]),
-        None => {
-            let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-            let words = |c: usize| -> usize {
-                rows.iter()
-                    .filter_map(|r| r.get(c))
-                    .map(|cell| cell.split_whitespace().count())
-                    .sum()
-            };
-            (
-                (0..width)
-                    .max_by_key(|&c| (words(c), std::cmp::Reverse(c)))
-                    .unwrap_or(0),
-                &rows[..],
-            )
-        }
-    };
-
-    Ok(dedupe(
-        body.iter()
-            .filter_map(|r| r.get(col))
-            .filter(|cell| !cell.is_empty() && !cell.starts_with('#'))
-            .map(normalize),
-    ))
-}
-
 fn strip_bom(s: &str) -> &str {
     s.strip_prefix('\u{feff}').unwrap_or(s)
 }
 
-/// Collapses internal runs of whitespace (including line breaks inside a
-/// quoted CSV cell) into single spaces.
+/// Collapses internal runs of whitespace into single spaces.
 fn normalize(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -167,42 +107,8 @@ mod tests {
     }
 
     #[test]
-    fn csv_with_header_picks_named_column() {
-        let csv = "id,Sentence,level\n1,\"Hello, world.\",easy\n2,Another one here.,hard\n";
-        assert_eq!(
-            parse_csv(csv).unwrap(),
-            vec!["Hello, world.", "Another one here."]
-        );
-    }
-
-    #[test]
-    fn csv_without_header_picks_wordiest_column() {
-        let csv = "1,The first sentence is here.\n2,And here is the second.\n";
-        assert_eq!(
-            parse_csv(csv).unwrap(),
-            vec!["The first sentence is here.", "And here is the second."]
-        );
-    }
-
-    #[test]
-    fn csv_single_column_and_multiline_cells() {
-        let csv = "Plain sentence.\n\"Quoted\nacross lines.\"\n\n";
-        assert_eq!(
-            parse_csv(csv).unwrap(),
-            vec!["Plain sentence.", "Quoted across lines."]
-        );
-    }
-
-    #[test]
-    fn dispatch_by_extension() {
-        let content = "a b, c d e\n";
-        assert_eq!(parse_file("x.CSV", content).unwrap(), vec!["c d e"]);
-        assert_eq!(parse_file("x.txt", content).unwrap(), vec!["a b, c d e"]);
-    }
-
-    #[test]
     fn set_names() {
-        assert_eq!(set_name_from_file("week1.csv"), "week1");
+        assert_eq!(set_name_from_file("week1.txt"), "week1");
         assert_eq!(set_name_from_file("dir/my.list.txt"), "my.list");
         assert_eq!(set_name_from_file(".hidden"), ".hidden");
         assert_eq!(set_name_from_file("noext"), "noext");

@@ -1,4 +1,4 @@
-// Sentences tab: toggle the built-in set, import CSV / text files or pasted
+// Sentences tab: toggle the built-in set, import text files or pasted
 // lines as named sets, and manage them.
 
 use leptos::prelude::*;
@@ -8,7 +8,7 @@ use wasm_bindgen_futures::JsFuture;
 
 use crate::app::AppState;
 use crate::model::{SentenceSet, sentence_pool};
-use crate::sentences::{BUILTIN, parse_file, parse_lines, set_name_from_file};
+use crate::sentences::{BUILTIN, parse_lines, set_name_from_file};
 use crate::storage::new_id;
 use crate::ui::{BTN, BTN_DANGER, CARD, CHECKBOX, HEADING, INPUT, MUTED};
 
@@ -69,9 +69,7 @@ pub fn Library() -> impl IntoView {
             let mut ok = true;
             for file in files {
                 let name = file.name();
-                let parsed = read_file(&file)
-                    .await
-                    .and_then(|content| parse_file(&name, &content));
+                let parsed = read_file(&file).await.map(|content| parse_lines(&content));
                 match parsed {
                     Ok(s) if s.is_empty() => {
                         ok = false;
@@ -192,19 +190,18 @@ pub fn Library() -> impl IntoView {
                 <h2 class=HEADING>"Import"</h2>
                 <div class="flex flex-col gap-2">
                     <label class="text-sm font-medium" for="import-file">
-                        "From files (.csv or .txt)"
+                        "From text files (.txt)"
                     </label>
                     <input
                         id="import-file"
                         type="file"
                         multiple
-                        accept=".csv,.txt,text/csv,text/plain"
+                        accept=".txt,text/plain"
                         class="text-sm file:mr-3 file:rounded-full file:border-0 file:bg-sky-600 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-sky-500"
                         on:change=on_files
                     />
                     <p class=MUTED>
-                        "Text: one sentence per line; blank lines and lines starting with # are ignored. "
-                        "CSV: the column headed “sentence” or “text” is used; without a header, the column with the most words. "
+                        "One sentence per line; blank lines and lines starting with # are ignored. "
                         "Each file becomes its own set."
                     </p>
                 </div>
