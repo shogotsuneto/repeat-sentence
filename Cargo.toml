@@ -1,0 +1,35 @@
+[package]
+name = "repeat-sentence"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+console_error_panic_hook = "0.1.7"
+leptos = { version = "0.8.21", features = ["csr"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-wasm-bindgen = "0.6"
+csv = "1.4"
+gloo-timers = { version = "0.3", features = ["futures"] }
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "DomRectList",
+  "Element",
+  "File",
+  "FileList",
+  "HtmlInputElement",
+  "KeyboardEvent",
+  "Storage",
+  "Url",
+  "Window",
+]
+[profile.release]
+# Smaller wasm for GitHub Pages.
+opt-level = "z"
+lto = true
+codegen-units = 1

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    name: fmt · clippy · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      # The app only runs in the browser, so lint the wasm build.
+      - name: Clippy (wasm)
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
+      # Pure logic (parsing, shuffling, voice selection) is tested natively.
+      - name: Test (native)
+        run: cargo test
