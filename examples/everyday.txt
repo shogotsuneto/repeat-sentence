@@ -1,0 +1,43 @@
+# Everyday sentences for Repeat Sentence practice.
+# Import this file from the Sentences tab: one sentence per line.
+# Lines starting with # and blank lines are ignored.
+
+# Shopping and errands
+Could you tell me where the nearest pharmacy is?
+I'd like to return this jacket because it doesn't fit.
+The supermarket closes early on public holidays.
+Do you have this shirt in a smaller size?
+I left my umbrella on the bus this morning.
+
+# Getting around
+The next train to the city centre leaves from platform four.
+Traffic was so heavy that I missed the start of the meeting.
+Please keep your ticket until you leave the station.
+It takes about twenty minutes to walk to the beach from here.
+The bus stop has been moved to the other side of the road.
+
+# Home and neighbours
+Our neighbours are having a barbecue in the garden this weekend.
+The plumber said he would come back on Thursday to fix the leak.
+Don't forget to take the rubbish out before you go to bed.
+I've been meaning to repaint the kitchen for months.
+
+# Eating out
+We'd like a table for four near the window, please.
+Could we have the bill when you have a moment?
+The soup of the day is pumpkin with fresh bread.
+I'm allergic to nuts, so I need to check the ingredients.
+
+# Work and appointments
+I need to reschedule my dentist appointment to next week.
+Could you send me the details by email after the call?
+My manager asked me to finish the report before lunch.
+The receptionist will let you know when the doctor is ready.
+
+# Plans and small talk
+It looks like it's going to rain, so bring a jacket.
+Have you seen the new film that everyone is talking about?
+My sister is moving to Canada at the end of the year.
+Let's meet at the café on the corner at half past six.
+I usually go for a run before breakfast when the weather is nice.
+We're planning a short trip to the mountains next month.

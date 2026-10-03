@@ -107,6 +107,14 @@ mod tests {
     }
 
     #[test]
+    fn example_file_parses() {
+        let sentences = parse_lines(include_str!("../examples/everyday.txt"));
+        assert_eq!(sentences.len(), 28);
+        assert!(sentences.iter().all(|s| !s.starts_with('#')));
+        assert!(sentences.iter().all(|s| !BUILTIN.contains(&s.as_str())));
+    }
+
+    #[test]
     fn set_names() {
         assert_eq!(set_name_from_file("week1.txt"), "week1");
         assert_eq!(set_name_from_file("dir/my.list.txt"), "my.list");
