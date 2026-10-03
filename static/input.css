@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* Where class names live: inside `view!` macros and the class-string
+   constants in `src/ui.rs`. Tailwind v4 scans these for utilities. */
+@source "../src";
+
+/* Dark mode follows the OS (`prefers-color-scheme`), Tailwind v4's default. */

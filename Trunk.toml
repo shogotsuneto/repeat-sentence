@@ -1,0 +1,8 @@
+[build]
+# Static files (index.html, input.css) live under static/ to keep the
+# project root uncluttered. Cargo.toml stays at the root.
+target = "static/index.html"
+
+[tools]
+# Trunk downloads the Tailwind standalone CLI (no Node needed).
+tailwindcss = "4.1.13"
