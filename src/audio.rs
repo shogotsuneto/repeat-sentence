@@ -22,6 +22,12 @@ extern "C" {
     fn speak_js(text: &str, voice_uri: &str, rate: f32) -> js_sys::Promise;
     #[wasm_bindgen(js_name = stopSpeaking)]
     pub fn stop_speaking();
+    #[wasm_bindgen(js_name = playUrl)]
+    fn play_url_js(url: &str) -> js_sys::Promise;
+    /// Call synchronously from a click handler before playing generated
+    /// audio outside the practice flow (e.g. previews).
+    #[wasm_bindgen(js_name = unlockPlayback)]
+    pub fn unlock_playback();
     #[wasm_bindgen(js_name = prime)]
     fn prime_js() -> js_sys::Promise;
     #[wasm_bindgen(js_name = record)]
@@ -84,6 +90,14 @@ pub fn on_voices_changed(mut f: impl FnMut(Vec<VoiceInfo>) + 'static) {
 
 /// `Ok(true)` when the sentence was read to the end, `Ok(false)` when it was
 /// cancelled. An empty `voice_uri` uses the browser's default voice.
+/// Plays generated audio with the same contract as [`speak`]; stopped by
+/// [`stop_speaking`].
+pub async fn play_url(url: &str) -> Result<bool, String> {
+    call(play_url_js(url))
+        .await
+        .map(|v| v.as_bool().unwrap_or(false))
+}
+
 pub async fn speak(text: &str, voice_uri: &str, rate: f32) -> Result<bool, String> {
     call(speak_js(text, voice_uri, rate))
         .await
