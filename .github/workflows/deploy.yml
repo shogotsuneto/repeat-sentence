@@ -31,7 +31,9 @@ jobs:
       - name: Install Trunk
         uses: jetli/trunk-action@v0.5.0
         with:
-          version: latest
+          # Pinned: "latest" sometimes resolved to an old release (0.19), which
+          # put the build output somewhere other than dist/.
+          version: v0.21.14
 
       - name: Build
         run: trunk build --release --public-url "/${{ github.event.repository.name }}/"
