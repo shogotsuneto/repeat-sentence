@@ -1,3 +1,7 @@
+# Fail fast on an incompatible Trunk (older releases resolve paths
+# differently and the Pages artifact ends up missing).
+trunk-version = "^0.21.14"
+
 [build]
 # Static files (index.html, input.css) live under static/ to keep the
 # project root uncluttered. Cargo.toml stays at the root.
