@@ -16,6 +16,10 @@ extern "C" {
     fn audio_url_js(id: u32) -> js_sys::Promise;
     #[wasm_bindgen(js_name = deleteAttempt)]
     fn delete_attempt_js(id: u32) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = deleteAudio)]
+    fn delete_audio_js(id: u32) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = clearAudio)]
+    fn clear_audio_js() -> js_sys::Promise;
     #[wasm_bindgen(js_name = clearAttempts)]
     fn clear_attempts_js() -> js_sys::Promise;
     #[wasm_bindgen(js_name = storageUsage)]
@@ -28,6 +32,7 @@ pub async fn save(mut record: AttemptRecord, audio_url: &str) -> Result<AttemptR
     let meta = serde_wasm_bindgen::to_value(&record).map_err(|e| e.to_string())?;
     let id = call(save_attempt_js(meta, audio_url)).await?;
     record.id = id.as_f64().map(|n| n as u32);
+    record.has_audio = true;
     Ok(record)
 }
 
@@ -48,6 +53,16 @@ pub async fn audio_url(id: u32) -> Result<Option<String>, String> {
 
 pub async fn delete(id: u32) -> Result<(), String> {
     call(delete_attempt_js(id)).await.map(|_| ())
+}
+
+/// Deletes the attempt's recording, keeping the attempt.
+pub async fn delete_audio(id: u32) -> Result<(), String> {
+    call(delete_audio_js(id)).await.map(|_| ())
+}
+
+/// Deletes all recordings, keeping every attempt.
+pub async fn clear_audio() -> Result<(), String> {
+    call(clear_audio_js()).await.map(|_| ())
 }
 
 pub async fn clear() -> Result<(), String> {
