@@ -48,3 +48,17 @@ pub fn clock(ms: u32) -> String {
 pub fn rate_label(rate: f32) -> String {
     format!("{rate:.2}×")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_clock_and_rate() {
+        assert_eq!(clock(0), "0:00");
+        assert_eq!(clock(9_999), "0:09");
+        assert_eq!(clock(75_000), "1:15");
+        assert_eq!(rate_label(1.0), "1.00×");
+        assert_eq!(rate_label(0.85), "0.85×");
+    }
+}

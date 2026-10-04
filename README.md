@@ -38,6 +38,19 @@ trunk build --release  # production build into dist/
 cargo test             # unit tests for the pure logic
 ```
 
+### Browser tests
+
+End-to-end tests run the built app in headless Chromium with [Playwright](https://playwright.dev/) (Node is used only for these tests). Speech synthesis and the microphone are replaced with deterministic fakes, so they run the same on CI.
+
+```sh
+cd e2e
+npm ci
+npx playwright install chromium
+npx playwright test    # builds with Trunk and serves dist/ automatically
+```
+
+CI (`.github/workflows/ci.yml`) runs fmt, clippy, the unit tests and the browser tests on every pull request and push to `main`.
+
 ## Deployment
 
 Pushing to `main` builds and deploys to GitHub Pages via `.github/workflows/deploy.yml` (Settings → Pages → Source must be **GitHub Actions**).
