@@ -11,14 +11,17 @@ A PTE Core "Repeat Sentence" practice app: a client-side Rust/WebAssembly app us
 ```bash
 trunk serve                     # dev server with hot reload
 trunk build --release           # production build (dist/)
-cargo test                      # native unit tests (model.rs, sentences.rs)
+cargo test                      # native unit tests (pure logic: model, sentences, ui, practice helpers)
+(cd e2e && npx playwright test) # browser e2e tests (needs `npm ci` + `npx playwright install chromium` once)
 cargo clippy --target wasm32-unknown-unknown -- -D warnings
 leptosfmt src/*.rs && cargo fmt # format (rust-analyzer.toml wires leptosfmt in)
 ```
 
 `trunk serve`'s file watcher sometimes stops picking up changes (notably edits to `js/*.js`); if the served `dist/snippets/**` is stale, restart `trunk serve`.
 
-CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, wasm clippy with `-D warnings`, and `cargo test`.
+CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, wasm clippy with `-D warnings`, `cargo test`, and the Playwright e2e suite, on pull requests and pushes to `main`.
+
+**E2E tests** (`e2e/`): Playwright + Chromium against `dist/` built by Trunk and served by `e2e/serve.mjs` (a dependency-free static server — Python's `http.server` resets connections under parallel load). `tests/fixtures.ts` installs fakes before the app loads: a scripted `speechSynthesis` (fixed voice list, records utterances in `window.__spoken`) and a `getUserMedia` oscillator whose level tests control (`mic.setLevel(0)` = silence) while counting live tracks (`mic.live()`), so tests can assert the mic is held only while recording. Options passed with `test.use` must not be bare arrays (Playwright treats `[value, options]` as a tuple) — hence `fakeVoices: { voices }`. Kokoro is not exercised beyond "nothing is downloaded until opt-in" (the model is 90+ MB).
 
 ## Architecture
 

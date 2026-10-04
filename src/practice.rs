@@ -753,3 +753,23 @@ pub fn Practice() -> impl IntoView {
         </div>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_extension_follows_mime() {
+        assert_eq!(file_extension("audio/webm;codecs=opus"), "webm");
+        assert_eq!(file_extension("audio/mp4"), "m4a");
+        assert_eq!(file_extension("audio/ogg"), "ogg");
+        assert_eq!(file_extension(""), "webm");
+    }
+
+    #[test]
+    fn stop_reasons_are_readable() {
+        assert_eq!(stop_reason("silence"), "stopped after silence");
+        assert_eq!(stop_reason("timeout"), "time limit reached");
+        assert_eq!(stop_reason("manual"), "stopped manually");
+    }
+}
