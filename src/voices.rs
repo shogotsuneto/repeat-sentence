@@ -390,6 +390,14 @@ fn KokoroPanel() -> impl IntoView {
     let rate = RwSignal::new(1.0f32);
     let status = app.kokoro;
     let backend = move || app.settings.with(|s| s.kokoro_backend);
+    // Whether the selected backend's weights are already downloaded, so the
+    // button says "Load" only when it won't trigger a big download.
+    let cached = RwSignal::new(false);
+    Effect::new(move |_| {
+        let b = backend();
+        status.track();
+        spawn_local(async move { cached.set(kokoro::is_cached(b).await) });
+    });
 
     let load = move |_| {
         spawn_local(async move {
@@ -505,11 +513,7 @@ fn KokoroPanel() -> impl IntoView {
                             kokoro::Status::Failed(e) => Some(e),
                             _ => None,
                         };
-                        let label = if app.settings.with_untracked(|s| s.kokoro_enabled) {
-                            "Load model"
-                        } else {
-                            "Download model"
-                        };
+                        let label = if cached.get() { "Load model" } else { "Download model" };
                         view! {
                             <button class=BTN on:click=load>
                                 {label}

@@ -8,7 +8,7 @@ A browser app for practising the **Repeat Sentence** task of PTE Core, built wit
 
 - A sentence is read aloud with the Web Speech API, then — after a short pause and a beep (1.5 s by default, adjustable) — recording starts; like the exam, it stops after 15 s or 3 s of silence (both configurable)
 - Each question picks a **random voice preset** (voice + speaking rate) from a pool you build; on first visit the pool is seeded with one voice per English accent (US, UK, AU, IN, …). Enhanced / Premium system voices are labelled as such
-- **Kokoro neural voices** (optional): natural US / UK voices generated on-device by the open [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) model via [kokoro-js](https://www.npmjs.com/package/kokoro-js) — handy where the browser's built-in voices are poor (e.g. iPhone). Downloaded on request from Hugging Face (163 MB with WebGPU fp16, 92 MB for the slower CPU fallback) and cached by the browser
+- **Kokoro neural voices** (optional): natural US / UK voices generated on-device by the open [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) model via [kokoro-js](https://www.npmjs.com/package/kokoro-js) — handy where the browser's built-in voices are poor (e.g. iPhone). Downloaded on request from Hugging Face (326 MB with WebGPU fp32, 92 MB for the slower CPU fallback) and cached by the browser
 - 48 built-in sentences; add your own from **plain-text** files (one sentence per line) or by pasting
 - Sentences are drawn without repeats until the whole pool has been used
 - Sentence text stays hidden until your attempt is over; replay the prompt, play back or download your recording, record again

@@ -13,6 +13,8 @@ extern "C" {
     fn loaded_backend_js() -> Option<String>;
     #[wasm_bindgen(js_name = load)]
     fn load_js(backend: &str, on_progress: &Closure<dyn FnMut(f64, f64)>) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = isCached)]
+    fn is_cached_js(backend: &str) -> js_sys::Promise;
     #[wasm_bindgen(js_name = forget)]
     fn forget_js() -> js_sys::Promise;
     #[wasm_bindgen(js_name = generate)]
@@ -39,6 +41,26 @@ pub async fn detect_backend() -> KokoroBackend {
         .unwrap_or(KokoroBackend::WasmQ8)
 }
 
+/// `Auto` resolved to a concrete backend for this device.
+pub async fn resolve(backend: KokoroBackend) -> KokoroBackend {
+    match backend {
+        KokoroBackend::Auto => detect_backend().await,
+        b => b,
+    }
+}
+
+/// Whether `backend`'s weights are already downloaded.
+pub async fn is_cached(backend: KokoroBackend) -> bool {
+    let Some(key) = resolve(backend).await.key() else {
+        return false;
+    };
+    call(is_cached_js(key))
+        .await
+        .ok()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 pub fn loaded_backend() -> Option<KokoroBackend> {
     loaded_backend_js().and_then(|k| KokoroBackend::from_key(&k))
 }
@@ -49,10 +71,7 @@ pub async fn load(
     backend: KokoroBackend,
     mut on_progress: impl FnMut(f64) + 'static,
 ) -> Result<KokoroBackend, String> {
-    let backend = match backend {
-        KokoroBackend::Auto => detect_backend().await,
-        b => b,
-    };
+    let backend = resolve(backend).await;
     let key = backend.key().unwrap_or("wasm/q8");
     let cb = Closure::<dyn FnMut(f64, f64)>::new(move |done: f64, total: f64| {
         if total > 0.0 {

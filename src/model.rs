@@ -294,8 +294,8 @@ pub enum KokoroBackend {
 impl KokoroBackend {
     pub const ALL: [KokoroBackend; 4] = [
         KokoroBackend::Auto,
-        KokoroBackend::WebGpuFp16,
         KokoroBackend::WebGpuFp32,
+        KokoroBackend::WebGpuFp16,
         KokoroBackend::WasmQ8,
     ];
 
@@ -316,8 +316,8 @@ impl KokoroBackend {
     pub fn describe(self) -> &'static str {
         match self {
             KokoroBackend::Auto => "Auto (best for this device)",
-            KokoroBackend::WebGpuFp16 => "WebGPU · fp16 — 163 MB, fast",
             KokoroBackend::WebGpuFp32 => "WebGPU · fp32 — 326 MB, fast",
+            KokoroBackend::WebGpuFp16 => "WebGPU · fp16 — 163 MB, fast; noisy on some devices",
             KokoroBackend::WasmQ8 => "CPU (WASM) · q8 — 92 MB, slow",
         }
     }
