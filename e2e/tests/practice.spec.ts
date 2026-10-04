@@ -70,3 +70,29 @@ test("deleting audio keeps the attempt in history", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Delete all audio" })).toHaveCount(0);
   await expect(page.locator("li", { hasText: "Audio deleted" })).toHaveCount(1);
 });
+
+test("pressing Next never reveals the next sentence before it is attempted", async ({ page, spoken }) => {
+  await page.goto("/");
+  // Record every text the sentence slot shows, as it happens.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__shown = [];
+    new MutationObserver(() => {
+      const t = document.querySelector("#practice p.leading-relaxed")?.textContent;
+      if (t && w.__shown.at(-1) !== t) w.__shown.push(t);
+    }).observe(document.getElementById("practice")!, { childList: true, subtree: true, characterData: true });
+  });
+
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(status(page)).toContainText("Recording", { timeout: 10_000 });
+  await page.keyboard.press("Space");
+  await expect(status(page)).toHaveText("Review");
+  const [first] = await spoken();
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(status(page)).toContainText("Recording", { timeout: 10_000 });
+  const shown: string[] = await page.evaluate(() => (window as any).__shown);
+  const second = (await spoken())[1];
+  expect(second.text).not.toBe(first.text);
+  expect(shown).toEqual([first.text]); // the second sentence never appeared
+});

@@ -209,6 +209,11 @@ impl Session {
             return;
         };
         self.error.set(None);
+        // Leave Review *before* swapping in the new item: Review reveals the
+        // sentence, and the async flow below only moves on after awaits (or
+        // after a CPU-bound Kokoro generation has blocked rendering), so the
+        // new sentence would otherwise show up for a moment — or longer.
+        self.phase.set(Phase::Waiting);
         diag::log(format!(
             "next: {:?} {} @{:.2} \"{}\"",
             item.engine,
