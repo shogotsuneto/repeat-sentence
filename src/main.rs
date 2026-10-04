@@ -1,5 +1,6 @@
 mod app;
 mod audio;
+mod diag;
 mod history;
 mod history_tab;
 mod kokoro;

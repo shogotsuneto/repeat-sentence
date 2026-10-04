@@ -11,7 +11,7 @@ use crate::model::{
     AttemptRecord, Engine, PoolEntry, Reveal, ShuffleBag, pick_index, sentence_pool,
 };
 use crate::ui::{BADGE, BTN, BTN_PRIMARY, BTN_SMALL, CARD, MUTED, clock, rate_label};
-use crate::{audio, history, kokoro};
+use crate::{audio, diag, history, kokoro};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
@@ -182,7 +182,12 @@ impl Session {
                     kokoro::start_generate(&item.text, &item.voice_uri, item.rate)
                 });
                 self.phase.set(Phase::Preparing);
+                let waited = js_sys::Date::now();
                 let url = kokoro::finish_generate(pending).await?;
+                diag::log(format!(
+                    "kokoro audio ready (waited {:.0} ms)",
+                    js_sys::Date::now() - waited
+                ));
                 if !self.is_current(v) {
                     return Ok(false);
                 }
@@ -204,6 +209,13 @@ impl Session {
             return;
         };
         self.error.set(None);
+        diag::log(format!(
+            "next: {:?} {} @{:.2} \"{}\"",
+            item.engine,
+            item.voice_label,
+            item.rate,
+            diag::snippet(&item.text)
+        ));
         self.item.set(Some(item.clone()));
         self.attempt.set(None);
         let settings = self.app.settings.get_untracked();
@@ -281,6 +293,14 @@ impl Session {
                 audio::revoke_url(&rec.url);
             }
             return;
+        }
+        match &result {
+            Ok(Some(rec)) => diag::log(format!(
+                "recorded {} ms ({}, {})",
+                rec.duration_ms, rec.reason, rec.mime
+            )),
+            Ok(None) => diag::log("recording cancelled"),
+            Err(e) => diag::log(format!("recording failed: {e}")),
         }
         match result {
             Ok(Some(rec)) => {
@@ -436,6 +456,19 @@ pub fn Practice() -> impl IntoView {
         silent_ms: RwSignal::new(0),
         error: RwSignal::new(None),
     };
+    // Phase changes and errors go to the crash log.
+    Effect::new(move |prev: Option<Phase>| {
+        let p = s.phase.get();
+        if prev.is_some_and(|prev| prev != p) {
+            diag::log(format!("phase {p:?}"));
+        }
+        p
+    });
+    Effect::new(move |_| {
+        if let Some(e) = s.error.get() {
+            diag::log(format!("error shown: {e}"));
+        }
+    });
     // A different pool invalidates the bag's indices.
     Effect::new(move |_| {
         pool.track();

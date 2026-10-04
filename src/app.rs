@@ -13,7 +13,7 @@ use crate::practice::Practice;
 use crate::settings_tab::SettingsTab;
 use crate::storage;
 use crate::voices::Voices;
-use crate::{audio, history, kokoro};
+use crate::{audio, diag, history, kokoro};
 
 /// App-wide state, provided as context. Everything persisted lives here;
 /// `Effect`s write it back to localStorage on change.
@@ -44,6 +44,8 @@ impl AppState {
             return Ok(());
         }
         self.kokoro.set(kokoro::Status::Loading(None));
+        diag::log(format!("kokoro load start ({wanted:?})"));
+        let started = js_sys::Date::now();
         let status = self.kokoro;
         match kokoro::load(wanted, move |f| {
             status.set(kokoro::Status::Loading(Some(f)))
@@ -51,6 +53,10 @@ impl AppState {
         .await
         {
             Ok(backend) => {
+                diag::log(format!(
+                    "kokoro load ok ({backend:?}) in {:.0} ms",
+                    js_sys::Date::now() - started
+                ));
                 self.kokoro.set(kokoro::Status::Ready(backend));
                 if !self.settings.with_untracked(|s| s.kokoro_enabled) {
                     self.settings.update(|s| s.kokoro_enabled = true);
@@ -58,6 +64,7 @@ impl AppState {
                 Ok(())
             }
             Err(e) => {
+                diag::log(format!("kokoro load failed: {e}"));
                 self.kokoro.set(kokoro::Status::Failed(e.clone()));
                 Err(e)
             }
@@ -158,6 +165,20 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    diag::log(format!(
+        "settings: {} presets ({} Kokoro), kokoro {:?} enabled={}, auto_record={}",
+        state.settings.with_untracked(|s| s.presets.len()),
+        state.settings.with_untracked(|s| s
+            .presets
+            .iter()
+            .filter(|p| p.engine == Engine::Kokoro)
+            .count()),
+        state.settings.with_untracked(|s| s.kokoro_backend),
+        state.settings.with_untracked(|s| s.kokoro_enabled),
+        state.settings.with_untracked(|s| s.auto_record),
+    ));
+    let crash = RwSignal::new(diag::previous_crash());
+
     let tab = RwSignal::new(Tab::Practice);
     let speech_ok = audio::speech_supported();
     let recording_ok = audio::recording_supported();
@@ -197,6 +218,42 @@ pub fn App() -> impl IntoView {
                         .collect_view()}
                 </nav>
             </header>
+
+            {move || {
+                crash
+                    .get()
+                    .map(|c| {
+                        let at = |ms: f64| {
+                            String::from(
+                                js_sys::Date::new(&ms.into()).to_locale_time_string("en-GB"),
+                            )
+                        };
+                        view! {
+                            <div class="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                                <p class="flex-1">
+                                    {format!(
+                                        "The previous session (started {}) ended unexpectedly around {} — usually the browser reloading the page, e.g. when it runs low on memory. Last event: {}. ",
+                                        at(c.started_at),
+                                        at(c.last_event_at),
+                                        if c.last_event.is_empty() { "none" } else { &c.last_event },
+                                    )}
+                                    <button
+                                        class="underline"
+                                        on:click=move |_| tab.set(Tab::Settings)
+                                    >
+                                        "See Settings → Diagnostics"
+                                    </button>
+                                </p>
+                                <button
+                                    class="shrink-0 font-medium"
+                                    on:click=move |_| crash.set(None)
+                                >
+                                    "✕"
+                                </button>
+                            </div>
+                        }
+                    })
+            }}
 
             {(!speech_ok || !recording_ok)
                 .then(|| {

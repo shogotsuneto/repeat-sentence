@@ -25,6 +25,13 @@ Plain text (`.txt`): one sentence per line. Blank lines and lines starting with 
 
 [`examples/everyday.txt`](examples/everyday.txt) is a ready-to-import set of everyday sentences (shopping, transport, eating out, appointments, small talk) that also shows the format.
 
+## Troubleshooting crashes / unexpected reloads
+
+If the page goes blank or restarts with the session cleared (typical of iOS killing the tab when it runs low on memory — e.g. while loading a large Kokoro model):
+
+- **In the app**: the next load shows a banner, and *Settings → Diagnostics → Show event log* lists what happened before (phase changes, model loads with timings, errors, panics). The log is kept in `localStorage` so it survives the kill; *Copy* puts it on the clipboard.
+- **Safari Web Inspector**: on the iPhone enable *Settings → Apps → Safari → Advanced → Web Inspector*, connect it to a Mac, then in Safari on the Mac open *Develop → (iPhone) → the page*. Record *Timelines → Memory* while reproducing; if the inspector disconnects at the moment of the crash, the page's process was killed.
+
 ## Development
 
 Requires the `wasm32-unknown-unknown` target and [Trunk](https://trunk-rs.github.io/trunk/). Trunk downloads the Tailwind CSS standalone CLI itself — no Node needed.
