@@ -26,10 +26,54 @@ async function audioCtx() {
   return ctx;
 }
 
+// One reusable <audio> element for generated (Kokoro) prompts. iOS only lets
+// a media element play outside a user gesture once it has played inside
+// one, so `prime()` unlocks it on the Start click. Media elements also keep
+// playing with the iPhone's silent switch on, unlike Web Audio.
+let player = null;
+const PLAY_START_TIMEOUT_MS = 2000;
+// The in-flight `playUrl`, if any: { resolve }.
+let playing = null;
+// 0.1 s of silence as a WAV blob URL (8 kHz, 8-bit mono: silence is 0x80).
+function silenceUrl() {
+  const n = 800;
+  const bytes = new Uint8Array(44 + n).fill(0x80);
+  const v = new DataView(bytes.buffer);
+  const text = (off, str) => [...str].forEach((c, i) => v.setUint8(off + i, c.charCodeAt(0)));
+  text(0, "RIFF");
+  v.setUint32(4, 36 + n, true);
+  text(8, "WAVEfmt ");
+  v.setUint32(16, 16, true); // fmt chunk size
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, 8000, true); // sample rate
+  v.setUint32(28, 8000, true); // byte rate
+  v.setUint16(32, 1, true); // block align
+  v.setUint16(34, 8, true); // bits per sample
+  text(36, "data");
+  v.setUint32(40, n, true);
+  return URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+}
+
+function audioPlayer() {
+  player ??= new Audio();
+  return player;
+}
+
 // Call from a user gesture (the Start click): unlocks audio on iOS, and if
 // microphone permission hasn't been granted yet, asks now — then releases
 // the mic straight away — so the prompt doesn't interrupt the first attempt.
+// Must run synchronously inside a user gesture (click handler).
+export function unlockPlayback() {
+  const p = audioPlayer();
+  if (!p.src) {
+    p.src = silenceUrl();
+    p.play().catch(() => {});
+  }
+}
+
 export async function prime() {
+  unlockPlayback();
   await audioCtx();
   if (!recordingSupported()) return;
   try {
@@ -120,6 +164,74 @@ export function speak(text, voiceUri, rate) {
 export function stopSpeaking() {
   utterance = null;
   if (speechSupported()) speechSynthesis.cancel();
+  if (playing) {
+    const p = playing;
+    playing = null;
+    p.stop();
+    p.resolve(false);
+  }
+}
+
+// Plays an audio URL (a generated prompt). Resolves true when it played to
+// the end, false when stopped by `stopSpeaking` or a newer prompt — the same
+// contract as `speak`.
+//
+// Uses the shared <audio> element first (plays through the iPhone's silent
+// switch). If that hasn't started within PLAY_START_TIMEOUT_MS — autoplay
+// blocked, or a tab the browser won't start media in — it falls back to
+// Web Audio rather than leaving the flow waiting forever.
+export function playUrl(url) {
+  stopSpeaking();
+  return new Promise((resolve, reject) => {
+    const p = audioPlayer();
+    let source = null; // Web Audio fallback, once started
+    const mine = {
+      resolve,
+      stop: () => {
+        clearTimeout(watchdog);
+        p.pause();
+        source?.stop();
+      },
+    };
+    playing = mine;
+    const finish = (ok, err) => {
+      if (playing !== mine) return;
+      playing = null;
+      mine.stop();
+      if (err) reject(err);
+      else resolve(ok);
+    };
+    const fallback = async () => {
+      if (playing !== mine) return;
+      p.pause();
+      try {
+        const c = await audioCtx();
+        const buf = await c.decodeAudioData(await (await fetch(url)).arrayBuffer());
+        if (playing !== mine) return;
+        source = c.createBufferSource();
+        source.buffer = buf;
+        source.connect(c.destination);
+        source.onended = () => finish(true);
+        source.start();
+      } catch (e) {
+        finish(false, new Error(`Couldn't play the generated audio: ${e.message}`));
+      }
+    };
+    const watchdog = setTimeout(fallback, PLAY_START_TIMEOUT_MS);
+    p.onplaying = () => clearTimeout(watchdog);
+    p.onended = () => finish(true);
+    p.onerror = () => {
+      clearTimeout(watchdog);
+      fallback();
+    };
+    p.src = url;
+    p.play().catch((e) => {
+      // Superseded by a newer prompt: that one owns the element now.
+      if (e.name === "AbortError") return;
+      clearTimeout(watchdog);
+      fallback();
+    });
+  });
 }
 
 function micLive() {

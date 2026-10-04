@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod history;
 mod history_tab;
+mod kokoro;
 mod library;
 mod model;
 mod panic_hook;

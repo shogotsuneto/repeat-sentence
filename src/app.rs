@@ -6,13 +6,14 @@ use std::collections::HashMap;
 use crate::history_tab::HistoryTab;
 use crate::library::Library;
 use crate::model::{
-    AttemptRecord, SentenceSet, Settings, VoiceInfo, VoicePreset, practice_counts, suggest_voices,
+    AttemptRecord, Engine, KokoroBackend, SentenceSet, Settings, VoiceInfo, VoicePreset,
+    practice_counts, suggest_voices,
 };
 use crate::practice::Practice;
 use crate::settings_tab::SettingsTab;
 use crate::storage;
 use crate::voices::Voices;
-use crate::{audio, history};
+use crate::{audio, history, kokoro};
 
 /// App-wide state, provided as context. Everything persisted lives here;
 /// `Effect`s write it back to localStorage on change.
@@ -28,6 +29,40 @@ pub struct AppState {
     pub history_error: RwSignal<Option<String>>,
     /// Attempts per sentence text, derived from `history`.
     pub counts: Memo<HashMap<String, u32>>,
+    pub kokoro: RwSignal<kokoro::Status>,
+}
+
+impl AppState {
+    /// Loads the Kokoro model with the configured backend unless it is
+    /// already loaded with it, keeping `kokoro` status up to date. Remembers
+    /// success so later visits load it (from cache) automatically.
+    pub async fn ensure_kokoro(self) -> Result<(), String> {
+        let wanted = self.settings.with_untracked(|s| s.kokoro_backend);
+        if let Some(loaded) = kokoro::loaded_backend()
+            && (wanted == KokoroBackend::Auto || wanted == loaded)
+        {
+            return Ok(());
+        }
+        self.kokoro.set(kokoro::Status::Loading(None));
+        let status = self.kokoro;
+        match kokoro::load(wanted, move |f| {
+            status.set(kokoro::Status::Loading(Some(f)))
+        })
+        .await
+        {
+            Ok(backend) => {
+                self.kokoro.set(kokoro::Status::Ready(backend));
+                if !self.settings.with_untracked(|s| s.kokoro_enabled) {
+                    self.settings.update(|s| s.kokoro_enabled = true);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                self.kokoro.set(kokoro::Status::Failed(e.clone()));
+                Err(e)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -71,6 +106,7 @@ pub fn App() -> impl IntoView {
         history,
         history_error: RwSignal::new(None),
         counts: Memo::new(move |_| history.with(|h| practice_counts(h))),
+        kokoro: RwSignal::new(kokoro::Status::NotLoaded),
     };
     provide_context(state);
 
@@ -85,6 +121,7 @@ pub fn App() -> impl IntoView {
             let presets: Vec<_> = suggest_voices(&voices)
                 .into_iter()
                 .map(|v| VoicePreset {
+                    engine: Engine::Browser,
                     id: storage::new_id(),
                     voice_uri: v.uri.clone(),
                     voice_label: v.label(),
@@ -96,6 +133,16 @@ pub fn App() -> impl IntoView {
         state.voices.set(voices);
     });
     audio::on_voices_changed(move |v| state.voices.set(v));
+    // The model is cached after the first download; warm it up in the
+    // background when the pool uses Kokoro voices.
+    let uses_kokoro = state.settings.with_untracked(|s| {
+        s.kokoro_enabled && s.presets.iter().any(|p| p.engine == Engine::Kokoro)
+    });
+    if uses_kokoro {
+        spawn_local(async move {
+            let _ = state.ensure_kokoro().await;
+        });
+    }
     spawn_local(async move {
         match history::list().await {
             // Attempts saved before the list arrived are already in it.

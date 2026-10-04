@@ -128,14 +128,142 @@ pub fn suggest_voices(voices: &[VoiceInfo]) -> Vec<VoiceInfo> {
         .collect()
 }
 
+/// Which speech engine reads a preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Engine {
+    /// The browser's Web Speech API; `voice_uri` is a `voiceURI`.
+    #[default]
+    Browser,
+    /// On-device Kokoro model; `voice_uri` is a Kokoro voice id (`af_heart`).
+    Kokoro,
+}
+
 /// One entry in the user's voice pool: a voice at a given speaking rate.
 /// Each question picks one of these at random.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoicePreset {
     pub id: u64,
+    /// Older presets predate Kokoro and are all browser voices.
+    #[serde(default)]
+    pub engine: Engine,
     pub voice_uri: String,
     pub voice_label: String,
     pub rate: f32,
+}
+
+/// A Kokoro voice. `grade` is the model card's overall grade (A best).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KokoroVoice {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub accent: &'static str,
+    pub female: bool,
+    pub grade: &'static str,
+    /// Included by "Add recommended Kokoro voices".
+    pub recommended: bool,
+}
+
+impl KokoroVoice {
+    pub fn label(&self) -> String {
+        let gender = if self.female { "F" } else { "M" };
+        format!("Kokoro {} ({}, {gender})", self.name, self.accent)
+    }
+
+    pub fn find(id: &str) -> Option<&'static KokoroVoice> {
+        KOKORO_VOICES.iter().find(|v| v.id == id)
+    }
+}
+
+const fn kv(
+    id: &'static str,
+    name: &'static str,
+    accent: &'static str,
+    female: bool,
+    grade: &'static str,
+    recommended: bool,
+) -> KokoroVoice {
+    KokoroVoice {
+        id,
+        name,
+        accent,
+        female,
+        grade,
+        recommended,
+    }
+}
+
+/// Kokoro v1.0's English voices (it has no Australian / Indian ones).
+pub const KOKORO_VOICES: &[KokoroVoice] = &[
+    kv("af_heart", "Heart", "en-US", true, "A", true),
+    kv("af_bella", "Bella", "en-US", true, "A-", true),
+    kv("af_nicole", "Nicole", "en-US", true, "B-", false),
+    kv("af_aoede", "Aoede", "en-US", true, "C+", false),
+    kv("af_kore", "Kore", "en-US", true, "C+", false),
+    kv("af_sarah", "Sarah", "en-US", true, "C+", false),
+    kv("af_alloy", "Alloy", "en-US", true, "C", false),
+    kv("af_nova", "Nova", "en-US", true, "C", false),
+    kv("af_sky", "Sky", "en-US", true, "C-", false),
+    kv("af_jessica", "Jessica", "en-US", true, "D", false),
+    kv("af_river", "River", "en-US", true, "D", false),
+    kv("am_fenrir", "Fenrir", "en-US", false, "C+", true),
+    kv("am_michael", "Michael", "en-US", false, "C+", true),
+    kv("am_puck", "Puck", "en-US", false, "C+", false),
+    kv("am_echo", "Echo", "en-US", false, "D", false),
+    kv("am_eric", "Eric", "en-US", false, "D", false),
+    kv("am_liam", "Liam", "en-US", false, "D", false),
+    kv("am_onyx", "Onyx", "en-US", false, "D", false),
+    kv("am_santa", "Santa", "en-US", false, "D-", false),
+    kv("am_adam", "Adam", "en-US", false, "F+", false),
+    kv("bf_emma", "Emma", "en-GB", true, "B-", true),
+    kv("bf_isabella", "Isabella", "en-GB", true, "C", true),
+    kv("bf_alice", "Alice", "en-GB", true, "D", false),
+    kv("bf_lily", "Lily", "en-GB", true, "D", false),
+    kv("bm_fable", "Fable", "en-GB", false, "C", true),
+    kv("bm_george", "George", "en-GB", false, "C", true),
+    kv("bm_lewis", "Lewis", "en-GB", false, "D+", false),
+    kv("bm_daniel", "Daniel", "en-GB", false, "D", false),
+];
+
+/// How the Kokoro model runs. `Auto` picks the best the device supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum KokoroBackend {
+    #[default]
+    Auto,
+    WebGpuFp16,
+    WebGpuFp32,
+    WasmQ8,
+}
+
+impl KokoroBackend {
+    pub const ALL: [KokoroBackend; 4] = [
+        KokoroBackend::Auto,
+        KokoroBackend::WebGpuFp16,
+        KokoroBackend::WebGpuFp32,
+        KokoroBackend::WasmQ8,
+    ];
+
+    /// The `device/dtype` key `js/kokoro.js` understands; `None` for Auto.
+    pub fn key(self) -> Option<&'static str> {
+        match self {
+            KokoroBackend::Auto => None,
+            KokoroBackend::WebGpuFp16 => Some("webgpu/fp16"),
+            KokoroBackend::WebGpuFp32 => Some("webgpu/fp32"),
+            KokoroBackend::WasmQ8 => Some("wasm/q8"),
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|b| b.key() == Some(key))
+    }
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            KokoroBackend::Auto => "Auto (best for this device)",
+            KokoroBackend::WebGpuFp16 => "WebGPU · fp16 — 163 MB, fast",
+            KokoroBackend::WebGpuFp32 => "WebGPU · fp32 — 326 MB, fast",
+            KokoroBackend::WasmQ8 => "CPU (WASM) · q8 — 92 MB, slow",
+        }
+    }
 }
 
 /// When the sentence text is shown on the practice screen.
@@ -165,6 +293,10 @@ pub struct Settings {
     pub silence_stop_secs: u32,
     /// Pause between pressing Next and the prompt starting.
     pub pre_delay_secs: u32,
+    pub kokoro_backend: KokoroBackend,
+    /// Set once the Kokoro model has loaded successfully: it is cached, so
+    /// the app loads it again in the background on later visits.
+    pub kokoro_enabled: bool,
     pub reveal: Reveal,
 }
 
@@ -181,6 +313,8 @@ impl Default for Settings {
             max_record_secs: 15,
             silence_stop_secs: 3,
             pre_delay_secs: 1,
+            kokoro_backend: KokoroBackend::Auto,
+            kokoro_enabled: false,
             reveal: Reveal::AfterAttempt,
         }
     }
@@ -480,6 +614,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(back.id, Some(7));
+    }
+
+    #[test]
+    fn kokoro_voices_and_backends() {
+        let ids: std::collections::HashSet<_> = KOKORO_VOICES.iter().map(|v| v.id).collect();
+        assert_eq!(ids.len(), KOKORO_VOICES.len());
+        assert_eq!(
+            KokoroVoice::find("bf_emma").unwrap().label(),
+            "Kokoro Emma (en-GB, F)"
+        );
+        assert!(KOKORO_VOICES.iter().filter(|v| v.recommended).count() >= 4);
+        for b in KokoroBackend::ALL {
+            if let Some(k) = b.key() {
+                assert_eq!(KokoroBackend::from_key(k), Some(b));
+            }
+        }
+    }
+
+    #[test]
+    fn presets_without_engine_are_browser_voices() {
+        let p: VoicePreset = serde_json::from_str(
+            r#"{"id":1,"voice_uri":"Samantha","voice_label":"Samantha (en-US)","rate":1.0}"#,
+        )
+        .unwrap();
+        assert_eq!(p.engine, Engine::Browser);
     }
 
     #[test]

@@ -7,15 +7,19 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::app::AppState;
-use crate::model::{AttemptRecord, PoolEntry, Reveal, ShuffleBag, pick_index, sentence_pool};
+use crate::model::{
+    AttemptRecord, Engine, PoolEntry, Reveal, ShuffleBag, pick_index, sentence_pool,
+};
 use crate::ui::{BADGE, BTN, BTN_PRIMARY, BTN_SMALL, CARD, MUTED, clock, rate_label};
-use crate::{audio, history};
+use crate::{audio, history, kokoro};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
     Idle,
     /// Short pause before the prompt plays.
     Waiting,
+    /// Loading the Kokoro model or generating the prompt's audio.
+    Preparing,
     Speaking,
     /// Prompt done; waiting for the microphone (and beep) before recording.
     OpeningMic,
@@ -28,6 +32,7 @@ enum Phase {
 struct Item {
     text: String,
     source: String,
+    engine: Engine,
     voice_uri: String,
     voice_label: String,
     rate: f32,
@@ -90,32 +95,108 @@ impl Session {
         let settings = self.app.settings.get_untracked();
         let voices = self.app.voices.get_untracked();
         // Presets whose voice this browser lacks (e.g. created on another
-        // device) are skipped. Before voices load, trust them all.
+        // device) are skipped. Before voices load, trust them all. Kokoro
+        // presets need the model to have been downloaded on this device.
         let usable: Vec<_> = settings
             .presets
             .iter()
-            .filter(|p| voices.is_empty() || voices.iter().any(|v| v.uri == p.voice_uri))
+            .filter(|p| match p.engine {
+                Engine::Browser => voices.is_empty() || voices.iter().any(|v| v.uri == p.voice_uri),
+                Engine::Kokoro => settings.kokoro_enabled,
+            })
             .collect();
-        let (voice_uri, voice_label, rate) = if usable.is_empty() {
-            (String::new(), "Browser default voice".to_string(), 1.0)
+        let (engine, voice_uri, voice_label, rate) = if usable.is_empty() {
+            Self::default_voice()
         } else {
             let p = usable[pick_index(usable.len(), &mut rand)];
-            (p.voice_uri.clone(), p.voice_label.clone(), p.rate)
+            (p.engine, p.voice_uri.clone(), p.voice_label.clone(), p.rate)
         };
         Some(Item {
             text: entry.text,
             source: entry.source,
+            engine,
             voice_uri,
             voice_label,
             rate,
         })
     }
 
+    fn default_voice() -> (Engine, String, String, f32) {
+        (
+            Engine::Browser,
+            String::new(),
+            "Browser default voice".to_string(),
+            1.0,
+        )
+    }
+
+    /// For a Kokoro item, loads the model and starts generating the prompt
+    /// (so it overlaps whatever waiting follows). If Kokoro can't load, the
+    /// item falls back to the browser's default voice.
+    async fn prepare(self, v: u32, item: &mut Item) -> Option<js_sys::Promise> {
+        if item.engine != Engine::Kokoro {
+            return None;
+        }
+        if self
+            .app
+            .kokoro
+            .with_untracked(|k| !matches!(k, kokoro::Status::Ready(_)))
+        {
+            self.phase.set(Phase::Preparing);
+        }
+        match self.app.ensure_kokoro().await {
+            Ok(()) => Some(kokoro::start_generate(
+                &item.text,
+                &item.voice_uri,
+                item.rate,
+            )),
+            Err(e) => {
+                if self.is_current(v) {
+                    self.error.set(Some(format!(
+                        "Kokoro unavailable ({e}); using the browser voice."
+                    )));
+                    (item.engine, item.voice_uri, item.voice_label, item.rate) =
+                        Self::default_voice();
+                    self.item.set(Some(item.clone()));
+                }
+                None
+            }
+        }
+    }
+
+    /// Reads the item aloud with its engine; same contract as
+    /// [`audio::speak`] (`Ok(false)` = cancelled).
+    async fn say(
+        self,
+        v: u32,
+        item: &Item,
+        pending: Option<js_sys::Promise>,
+    ) -> Result<bool, String> {
+        match item.engine {
+            Engine::Browser => {
+                self.phase.set(Phase::Speaking);
+                audio::speak(&item.text, &item.voice_uri, item.rate).await
+            }
+            Engine::Kokoro => {
+                let pending = pending.unwrap_or_else(|| {
+                    kokoro::start_generate(&item.text, &item.voice_uri, item.rate)
+                });
+                self.phase.set(Phase::Preparing);
+                let url = kokoro::finish_generate(pending).await?;
+                if !self.is_current(v) {
+                    return Ok(false);
+                }
+                self.phase.set(Phase::Speaking);
+                audio::play_url(&url).await
+            }
+        }
+    }
+
     /// Start (or skip to) a new question.
     fn next(self) {
         self.interrupt();
         let v = self.bump();
-        let Some(item) = self.pick() else {
+        let Some(mut item) = self.pick() else {
             self.phase.set(Phase::Idle);
             self.error.set(Some(
                 "No sentences are enabled. Turn some on in the Sentences tab.".into(),
@@ -138,6 +219,10 @@ impl Session {
             if !self.is_current(v) {
                 return;
             }
+            let pending = self.prepare(v, &mut item).await;
+            if !self.is_current(v) {
+                return;
+            }
             if settings.pre_delay_secs > 0 {
                 self.phase.set(Phase::Waiting);
                 TimeoutFuture::new(settings.pre_delay_secs * 1000).await;
@@ -145,8 +230,7 @@ impl Session {
                     return;
                 }
             }
-            self.phase.set(Phase::Speaking);
-            match audio::speak(&item.text, &item.voice_uri, item.rate).await {
+            match self.say(v, &item, pending).await {
                 Ok(true) => {}
                 // Cancelled: whoever cancelled it now owns the phase.
                 Ok(false) => return,
@@ -262,14 +346,14 @@ impl Session {
 
     /// Play the prompt again for review (does not start recording).
     fn replay(self) {
-        let Some(item) = self.item.get_untracked() else {
+        let Some(mut item) = self.item.get_untracked() else {
             return;
         };
         self.interrupt();
         let v = self.bump();
-        self.phase.set(Phase::Speaking);
         spawn_local(async move {
-            let res = audio::speak(&item.text, &item.voice_uri, item.rate).await;
+            let pending = self.prepare(v, &mut item).await;
+            let res = self.say(v, &item, pending).await;
             if self.is_current(v) {
                 if let Err(e) = res {
                     self.error.set(Some(e));
@@ -283,7 +367,7 @@ impl Session {
         match self.phase.get_untracked() {
             // Keeps what was recorded so far.
             Phase::Recording => audio::stop_recording(),
-            Phase::Waiting | Phase::Speaking | Phase::OpeningMic => {
+            Phase::Waiting | Phase::Preparing | Phase::Speaking | Phase::OpeningMic => {
                 self.bump();
                 self.interrupt();
                 self.phase.set(Phase::Review);
@@ -297,7 +381,7 @@ impl Session {
         match self.phase.get_untracked() {
             Phase::Idle | Phase::Review => self.next(),
             Phase::Recording => self.stop(),
-            Phase::Waiting | Phase::Speaking | Phase::OpeningMic => {}
+            Phase::Waiting | Phase::Preparing | Phase::Speaking | Phase::OpeningMic => {}
         }
     }
 
@@ -398,6 +482,13 @@ pub fn Practice() -> impl IntoView {
     let status = move || match phase.get() {
         Phase::Idle => "Ready".to_string(),
         Phase::Waiting => "Get ready…".to_string(),
+        Phase::Preparing => match app.kokoro.get() {
+            kokoro::Status::Loading(Some(f)) => {
+                format!("Loading voice model… {:.0}%", f * 100.0)
+            }
+            kokoro::Status::Loading(None) => "Loading voice model…".to_string(),
+            _ => "Preparing audio…".to_string(),
+        },
         Phase::Speaking => "Listen".to_string(),
         Phase::OpeningMic => "Get ready to speak…".to_string(),
         Phase::Recording => format!(
@@ -416,6 +507,7 @@ pub fn Practice() -> impl IntoView {
                         let color = match phase.get() {
                             Phase::Idle => "bg-zinc-400",
                             Phase::Waiting => "bg-sky-500",
+                            Phase::Preparing => "bg-sky-300 animate-pulse",
                             Phase::Speaking => "bg-sky-500 animate-pulse",
                             Phase::OpeningMic => "bg-rose-300",
                             Phase::Recording => "bg-rose-500 animate-pulse",
@@ -524,7 +616,10 @@ pub fn Practice() -> impl IntoView {
                         disabled=move || {
                             matches!(
                                 phase.get(),
-                                Phase::Waiting | Phase::Speaking | Phase::OpeningMic
+                                Phase::Waiting
+                                | Phase::Preparing
+                                | Phase::Speaking
+                                | Phase::OpeningMic
                             )
                         }
                     >
@@ -535,7 +630,10 @@ pub fn Practice() -> impl IntoView {
                         }}
                     </button>
                     <Show when=move || {
-                        matches!(phase.get(), Phase::Waiting | Phase::Speaking | Phase::OpeningMic)
+                        matches!(
+                            phase.get(),
+                            Phase::Waiting | Phase::Preparing | Phase::Speaking | Phase::OpeningMic
+                        )
                     }>
                         <button class=BTN on:click=move |_| s.stop()>
                             "Stop"
