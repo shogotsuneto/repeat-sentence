@@ -51,15 +51,72 @@ impl VoiceInfo {
         }
     }
 
-    pub fn label(&self) -> String {
-        match self.quality() {
-            // Don't repeat a quality the name already carries ("Ava (Premium)").
-            Some(q) if !self.name.contains(q) => {
-                format!("{} · {q} ({})", self.name, self.lang_tag())
-            }
-            _ => format!("{} ({})", self.name, self.lang_tag()),
+    /// The name without a trailing language description, which the label
+    /// already shows as a tag ("Daniel (English (United Kingdom))" → "Daniel").
+    fn short_name(&self) -> &str {
+        match self.name.split_once(" (English") {
+            Some((base, _)) if !base.is_empty() => base,
+            _ => &self.name,
         }
     }
+
+    pub fn label(&self) -> String {
+        let name = self.short_name();
+        match self.quality() {
+            // Don't repeat a quality the name already carries ("Ava (Premium)").
+            Some(q) if !name.contains(q) => format!("{name} · {q} ({})", self.lang_tag()),
+            _ => format!("{name} ({})", self.lang_tag()),
+        }
+    }
+}
+
+/// Labels for `voices`, made unique. Some platforms list a voice twice
+/// under the same name (e.g. two "Daniel (en-GB)" with different URIs);
+/// colliding labels get the first URI segment that tells them apart
+/// ("compact" / "enhanced"), else on-device / network, else a number.
+pub fn unique_labels(voices: &[VoiceInfo]) -> Vec<String> {
+    let base: Vec<String> = voices.iter().map(VoiceInfo::label).collect();
+    let mut out = base.clone();
+    for (i, label) in base.iter().enumerate() {
+        let group: Vec<usize> = (0..voices.len()).filter(|&j| &base[j] == label).collect();
+        if group.len() < 2 {
+            continue;
+        }
+        let segments = |k: usize| -> Vec<&str> { voices[k].uri.split(['.', '/', ':']).collect() };
+        let differing = (0..)
+            .take_while(|&n| group.iter().any(|&k| segments(k).len() > n))
+            .find(|&n| {
+                let first = segments(group[0]).get(n).copied();
+                group.iter().any(|&k| segments(k).get(n).copied() != first)
+            });
+        let distinct = |tag: &dyn Fn(usize) -> String| {
+            let tags: Vec<String> = group.iter().map(|&k| tag(k)).collect();
+            let unique = tags
+                .iter()
+                .enumerate()
+                .all(|(a, t)| tags.iter().skip(a + 1).all(|u| u != t));
+            unique.then(|| tag(i))
+        };
+        let suffix = differing
+            .and_then(|n| distinct(&|k| segments(k).get(n).unwrap_or(&"").to_string()))
+            .filter(|t| !t.is_empty())
+            .or_else(|| {
+                distinct(&|k| {
+                    if voices[k].local {
+                        "on-device"
+                    } else {
+                        "network"
+                    }
+                    .to_string()
+                })
+            })
+            .unwrap_or_else(|| {
+                let pos = group.iter().position(|&k| k == i).unwrap_or(0);
+                format!("#{}", pos + 1)
+            });
+        out[i] = format!("{label} · {suffix}");
+    }
+    out
 }
 
 const NOVELTY_VOICES: &[&str] = &[
@@ -538,6 +595,10 @@ mod tests {
         assert!(voice("Zarvox", "en-US").is_novelty());
         assert!(voice("Eddy (English (US))", "en-US").is_novelty());
         assert!(!voice("Samantha", "en-US").is_novelty());
+        assert_eq!(
+            voice("Daniel (English (United Kingdom))", "en-GB").label(),
+            "Daniel (en-GB)"
+        );
     }
 
     #[test]
@@ -558,6 +619,38 @@ mod tests {
         // Same name at two quality levels: the better one is suggested.
         let picked = suggest_voices(&[compact, enhanced.clone()]);
         assert_eq!(picked, vec![enhanced]);
+    }
+
+    #[test]
+    fn duplicate_labels_are_disambiguated() {
+        let v = |uri: &str, name: &str, local: bool| VoiceInfo {
+            uri: uri.into(),
+            name: name.into(),
+            lang: "en-GB".into(),
+            local,
+        };
+        // Differ in a URI segment.
+        let labels = unique_labels(&[
+            v("com.apple.speech.synthesis.voice.daniel", "Daniel", true),
+            v("com.apple.voice.compact.en-GB.Daniel", "Daniel", true),
+            v("com.apple.voice.compact.en-GB.Arthur", "Arthur", true),
+        ]);
+        assert_eq!(
+            labels,
+            vec![
+                "Daniel (en-GB) · speech",
+                "Daniel (en-GB) · voice",
+                "Arthur (en-GB)"
+            ]
+        );
+        // Same URI shape: fall back to on-device / network, then a number.
+        let labels = unique_labels(&[v("Daniel", "Daniel", true), v("Daniel", "Daniel", false)]);
+        assert_eq!(
+            labels,
+            vec!["Daniel (en-GB) · on-device", "Daniel (en-GB) · network"]
+        );
+        let labels = unique_labels(&[v("Daniel", "Daniel", true), v("Daniel", "Daniel", true)]);
+        assert_eq!(labels, vec!["Daniel (en-GB) · #1", "Daniel (en-GB) · #2"]);
     }
 
     #[test]

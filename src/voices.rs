@@ -7,6 +7,7 @@ use leptos::task::spawn_local;
 use crate::app::AppState;
 use crate::model::{
     Engine, KOKORO_VOICES, KokoroBackend, KokoroVoice, VoiceInfo, VoicePreset, suggest_voices,
+    unique_labels,
 };
 use crate::storage::new_id;
 use crate::ui::{
@@ -94,11 +95,33 @@ pub fn Voices() -> impl IntoView {
     let selected = RwSignal::new(String::new());
     let rate = RwSignal::new(1.0f32);
 
+    // Voices are addressed by URI, so entries repeating a URI are the same
+    // voice as far as the Speech API is concerned: keep one.
+    let distinct = Memo::new(move |_| {
+        let mut seen = std::collections::HashSet::new();
+        app.voices.with(|vs| {
+            vs.iter()
+                .filter(|v| seen.insert(v.uri.clone()))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+    });
+    // URI -> label, unique even when names repeat.
+    let labels = Memo::new(move |_| {
+        distinct.with(|vs| {
+            vs.iter()
+                .map(|v| v.uri.clone())
+                .zip(unique_labels(vs))
+                .collect::<std::collections::HashMap<_, _>>()
+        })
+    });
+    let label_of = move |v: &VoiceInfo| {
+        labels.with_untracked(|l| l.get(&v.uri).cloned().unwrap_or_else(|| v.label()))
+    };
     // English, non-novelty voices by default; sorted by accent then name.
     let choices = Memo::new(move |_| {
         let all = show_all.get();
-        let mut v: Vec<VoiceInfo> = app
-            .voices
+        let mut v: Vec<VoiceInfo> = distinct
             .get()
             .into_iter()
             .filter(|v| all || (v.is_english() && !v.is_novelty()))
@@ -124,7 +147,7 @@ pub fn Voices() -> impl IntoView {
                 app,
                 Engine::Browser,
                 &v.uri,
-                v.label(),
+                label_of(&v),
                 rate.get_untracked(),
             );
         }
@@ -132,7 +155,7 @@ pub fn Voices() -> impl IntoView {
     let add_suggested = move |_| {
         let r = rate.get_untracked();
         for v in app.voices.with_untracked(|vs| suggest_voices(vs)) {
-            add_preset(app, Engine::Browser, &v.uri, v.label(), r);
+            add_preset(app, Engine::Browser, &v.uri, label_of(&v), r);
         }
     };
 
@@ -170,9 +193,10 @@ pub fn Voices() -> impl IntoView {
                     "Available voices depend on your browser and OS — presets missing here are skipped."
                 </p>
                 <p class=MUTED>
-                    "iPhone / iPad: voices downloaded in Settings → Accessibility → Spoken Content → Voices "
-                    "show up as “Enhanced” or “Premium” after Safari is fully closed and reopened. "
-                    "Siri voices are not available to websites."
+                    "iPhone / iPad: Safari offers websites only some of the voices installed under "
+                    "Settings → Accessibility → Read & Speak (older iOS: Spoken Content) → Voices, "
+                    "and Siri voices never. If a voice isn't listed below, this app can't use it — "
+                    "try the Kokoro voices further down instead."
                 </p>
                 <Show
                     when=move || app.settings.with(|s| !s.presets.is_empty())
@@ -264,7 +288,7 @@ pub fn Voices() -> impl IntoView {
                                             value=v.uri.clone()
                                             selected=move || selected.get() == uri
                                         >
-                                            {v.label()}
+                                            {label_of(&v)}
                                         </option>
                                     }
                                 }
@@ -305,6 +329,44 @@ pub fn Voices() -> impl IntoView {
                         </button>
                     </div>
                 </Show>
+                <details>
+                    <summary class=format!(
+                        "cursor-pointer {MUTED}",
+                    )>
+                        {move || {
+                            format!(
+                                "What this browser reports ({} voices)",
+                                app.voices.with(Vec::len),
+                            )
+                        }}
+                    </summary>
+                    <p class=format!(
+                        "mt-2 {MUTED}",
+                    )>
+                        "Raw speechSynthesis.getVoices() output, unfiltered — useful for checking which installed voices Safari actually exposes."
+                    </p>
+                    <ul class="mt-2 flex flex-col gap-1 font-mono text-xs break-all select-text">
+                        {move || {
+                            app.voices
+                                .get()
+                                .into_iter()
+                                .map(|v| {
+                                    view! {
+                                        <li>
+                                            {format!(
+                                                "{} | {} | {} | {}",
+                                                v.name,
+                                                v.lang,
+                                                if v.local { "local" } else { "network" },
+                                                v.uri,
+                                            )}
+                                        </li>
+                                    }
+                                })
+                                .collect_view()
+                        }}
+                    </ul>
+                </details>
             </section>
 
             <KokoroPanel />
