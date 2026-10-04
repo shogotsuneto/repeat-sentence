@@ -55,12 +55,16 @@ export async function saveAttempt(meta, audioUrl) {
   return req.result;
 }
 
+// All attempts, each with `hasAudio` (whether its recording is still
+// stored). Only the audio store's keys are read, not the blobs.
 export async function listAttempts() {
   const db = await openDb();
-  const tx = db.transaction(ATTEMPTS, "readonly");
-  const req = tx.objectStore(ATTEMPTS).getAll();
+  const tx = db.transaction([ATTEMPTS, AUDIO], "readonly");
+  const attempts = tx.objectStore(ATTEMPTS).getAll();
+  const audioIds = tx.objectStore(AUDIO).getAllKeys();
   await complete(tx);
-  return req.result;
+  const withAudio = new Set(audioIds.result);
+  return attempts.result.map((a) => ({ ...a, hasAudio: withAudio.has(a.id) }));
 }
 
 // A fresh blob URL for the attempt's recording (revoke it when done), or
@@ -78,6 +82,22 @@ export async function deleteAttempt(id) {
   const tx = db.transaction([ATTEMPTS, AUDIO], "readwrite");
   tx.objectStore(ATTEMPTS).delete(id);
   tx.objectStore(AUDIO).delete(id);
+  await complete(tx);
+}
+
+// Deletes an attempt's recording but keeps the attempt itself.
+export async function deleteAudio(id) {
+  const db = await openDb();
+  const tx = db.transaction(AUDIO, "readwrite");
+  tx.objectStore(AUDIO).delete(id);
+  await complete(tx);
+}
+
+// Deletes every recording but keeps all attempts.
+export async function clearAudio() {
+  const db = await openDb();
+  const tx = db.transaction(AUDIO, "readwrite");
+  tx.objectStore(AUDIO).clear();
   await complete(tx);
 }
 

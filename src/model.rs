@@ -436,6 +436,10 @@ pub struct AttemptRecord {
     /// Why recording stopped: `manual`, `timeout` or `silence`.
     pub reason: String,
     pub mime: String,
+    /// Whether the recording is still stored. Derived when listing (from
+    /// the audio store's keys), never persisted with the attempt.
+    #[serde(default, skip_serializing)]
+    pub has_audio: bool,
 }
 
 /// How many times each sentence (by text) has been practised.
@@ -684,6 +688,7 @@ mod tests {
             duration_ms: 1000,
             reason: "manual".into(),
             mime: "audio/webm".into(),
+            has_audio: true,
         }
     }
 
@@ -699,6 +704,7 @@ mod tests {
     fn attempt_record_omits_missing_id() {
         let json = serde_json::to_value(attempt("A.")).unwrap();
         assert!(json.get("id").is_none());
+        assert!(json.get("hasAudio").is_none());
         assert_eq!(json["atMs"], 0.0);
         assert_eq!(json["voiceLabel"], "v");
         let back: AttemptRecord = serde_json::from_value(
@@ -707,6 +713,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(back.id, Some(7));
+        assert!(!back.has_audio);
+        let listed: AttemptRecord = serde_json::from_value(serde_json::json!({"id": 7,
+            "atMs": 1.0, "text": "A.", "source": "s", "voiceLabel": "v", "rate": 1.0,
+            "durationMs": 5, "reason": "silence", "mime": "m", "hasAudio": true}))
+        .unwrap();
+        assert!(listed.has_audio);
     }
 
     #[test]

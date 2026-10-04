@@ -308,6 +308,8 @@ impl Session {
             duration_ms: rec.duration_ms,
             reason: rec.reason,
             mime: rec.mime,
+            // Set once saved.
+            has_audio: false,
         };
         let seq = self.session.with_untracked(|h| h.len() as u32 + 1);
         let attempt = Attempt {

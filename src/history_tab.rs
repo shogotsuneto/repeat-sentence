@@ -132,6 +132,21 @@ fn AttemptRow(record: AttemptRecord) -> impl IntoView {
             }
         });
     };
+    let delete_audio = move |_| {
+        let Some(id) = id else {
+            return;
+        };
+        spawn_local(async move {
+            match history::delete_audio(id).await {
+                Ok(()) => app.history.update(|h| {
+                    if let Some(r) = h.iter_mut().find(|r| r.id == Some(id)) {
+                        r.has_audio = false;
+                    }
+                }),
+                Err(e) => app.history_error.set(Some(format!("Couldn't delete: {e}"))),
+            }
+        });
+    };
 
     view! {
         <li class=format!("{CARD} flex flex-col gap-2 p-4")>
@@ -148,9 +163,28 @@ fn AttemptRow(record: AttemptRecord) -> impl IntoView {
                 <span class=BADGE>{stop_reason(&record.reason)}</span>
                 <span class=BADGE>{record.source.clone()}</span>
             </div>
-            <div class="flex items-center justify-between gap-3">
-                {id.map(|id| view! { <SavedAudio id=id mime=record.mime.clone() /> })}
-                <button class=BTN_DANGER on:click=delete>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                {match (id, record.has_audio) {
+                    (Some(id), true) => {
+                        view! {
+                            <SavedAudio id=id mime=record.mime.clone() />
+                            <button
+                                class=BTN_SMALL
+                                on:click=delete_audio
+                                title="Delete the recording but keep this attempt in the history"
+                            >
+                                "Delete audio"
+                            </button>
+                        }
+                            .into_any()
+                    }
+                    _ => view! { <span class=MUTED>"Audio deleted"</span> }.into_any(),
+                }}
+                <button
+                    class=BTN_DANGER
+                    on:click=delete
+                    title="Delete this attempt and its recording"
+                >
                     "Delete"
                 </button>
             </div>
@@ -163,6 +197,7 @@ pub fn HistoryTab() -> impl IntoView {
     let app = expect_context::<AppState>();
     let shown = RwSignal::new(PAGE);
     let confirm_clear = RwSignal::new(false);
+    let confirm_clear_audio = RwSignal::new(false);
     let usage = RwSignal::new(None::<f64>);
 
     // Refresh the storage estimate whenever the history changes.
@@ -206,6 +241,23 @@ pub fn HistoryTab() -> impl IntoView {
         });
     };
 
+    let clear_audio = move |_| {
+        if !confirm_clear_audio.get_untracked() {
+            confirm_clear_audio.set(true);
+            return;
+        }
+        confirm_clear_audio.set(false);
+        spawn_local(async move {
+            match history::clear_audio().await {
+                Ok(()) => app
+                    .history
+                    .update(|h| h.iter_mut().for_each(|r| r.has_audio = false)),
+                Err(e) => app.history_error.set(Some(format!("Couldn't delete: {e}"))),
+            }
+        });
+    };
+    let any_audio = move || app.history.with(|h| h.iter().any(|r| r.has_audio));
+
     view! {
         <div class="flex flex-col gap-6">
             {move || {
@@ -238,21 +290,39 @@ pub fn HistoryTab() -> impl IntoView {
             </section> <section class="flex flex-col gap-3">
                 <div class="flex items-center justify-between">
                     <h2 class=HEADING>"History"</h2>
-                    <Show when=move || app.history.with(|h| !h.is_empty())>
-                        <button
-                            class=BTN_DANGER
-                            on:click=clear_all
-                            on:blur=move |_| confirm_clear.set(false)
-                        >
-                            {move || {
-                                if confirm_clear.get() {
-                                    "Click again to delete everything"
-                                } else {
-                                    "Delete all"
-                                }
-                            }}
-                        </button>
-                    </Show>
+                    <div class="flex flex-wrap justify-end gap-2">
+                        <Show when=any_audio>
+                            <button
+                                class=BTN_DANGER
+                                on:click=clear_audio
+                                on:blur=move |_| confirm_clear_audio.set(false)
+                                title="Delete every recording but keep the history"
+                            >
+                                {move || {
+                                    if confirm_clear_audio.get() {
+                                        "Click again to delete all audio"
+                                    } else {
+                                        "Delete all audio"
+                                    }
+                                }}
+                            </button>
+                        </Show>
+                        <Show when=move || app.history.with(|h| !h.is_empty())>
+                            <button
+                                class=BTN_DANGER
+                                on:click=clear_all
+                                on:blur=move |_| confirm_clear.set(false)
+                            >
+                                {move || {
+                                    if confirm_clear.get() {
+                                        "Click again to delete everything"
+                                    } else {
+                                        "Delete all"
+                                    }
+                                }}
+                            </button>
+                        </Show>
+                    </div>
                 </div>
                 <Show
                     when=move || app.history.with(|h| !h.is_empty())
@@ -264,7 +334,16 @@ pub fn HistoryTab() -> impl IntoView {
                         }
                     }
                 >
-                    <For each=days key=|(day, rows)| (day.clone(), rows.len()) let((day, rows))>
+                    <For
+                        each=days
+                        key=|(day, rows)| {
+                            (
+                                day.clone(),
+                                rows.iter().map(|r| (r.id, r.has_audio)).collect::<Vec<_>>(),
+                            )
+                        }
+                        let((day, rows))
+                    >
                         <div class="flex flex-col gap-2">
                             <h3 class="mt-2 text-sm font-semibold text-zinc-500">
                                 {rows
@@ -273,7 +352,11 @@ pub fn HistoryTab() -> impl IntoView {
                                     .unwrap_or(day)}
                             </h3>
                             <ul class="flex flex-col gap-2">
-                                <For each=move || rows.clone() key=|r| r.id let(record)>
+                                <For
+                                    each=move || rows.clone()
+                                    key=|r| (r.id, r.has_audio)
+                                    let(record)
+                                >
                                     <AttemptRow record=record />
                                 </For>
                             </ul>
