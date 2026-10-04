@@ -22,11 +22,43 @@ async fn read_file(file: &web_sys::File) -> Result<String, String> {
 
 #[component]
 fn SentenceList(sentences: Vec<String>) -> impl IntoView {
+    let app = expect_context::<AppState>();
+    let total = sentences.len();
+    let sentences = StoredValue::new(sentences);
+    let practised = move || {
+        app.counts
+            .with(|c| sentences.with_value(|ss| ss.iter().filter(|s| c.contains_key(*s)).count()))
+    };
     view! {
         <details class="mt-2">
-            <summary class=format!("cursor-pointer {MUTED}")>"Show sentences"</summary>
+            <summary class=format!(
+                "cursor-pointer {MUTED}",
+            )>{move || format!("Show sentences · {}/{total} practised", practised())}</summary>
             <ol class="mt-2 list-decimal space-y-1 pl-6 text-sm">
-                {sentences.into_iter().map(|s| view! { <li>{s}</li> }).collect_view()}
+                {sentences
+                    .get_value()
+                    .into_iter()
+                    .map(|s| {
+                        let key = s.clone();
+                        let times = move || app.counts.with(|c| c.get(&key).copied().unwrap_or(0));
+                        view! {
+                            <li>
+                                {s}
+                                {move || {
+                                    let n = times();
+                                    (n > 0)
+                                        .then(|| {
+                                            view! {
+                                                <span class="ml-2 text-xs text-emerald-600 dark:text-emerald-400">
+                                                    {format!("✓ {n}×")}
+                                                </span>
+                                            }
+                                        })
+                                }}
+                            </li>
+                        }
+                    })
+                    .collect_view()}
             </ol>
         </details>
     }

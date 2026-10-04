@@ -16,10 +16,30 @@ let active = null;
 // event) unless something keeps a reference to it.
 let utterance = null;
 
-function audioCtx() {
+async function audioCtx() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-  if (ctx.state === "suspended") ctx.resume();
+  // Without user activation `resume()` can stay pending indefinitely; don't
+  // let that stall the flow.
+  if (ctx.state === "suspended") {
+    await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 300))]);
+  }
   return ctx;
+}
+
+// Call from a user gesture (the Start click): unlocks audio on iOS, and if
+// microphone permission hasn't been granted yet, asks now — then releases
+// the mic straight away — so the prompt doesn't interrupt the first attempt.
+export async function prime() {
+  await audioCtx();
+  if (!recordingSupported()) return;
+  try {
+    const status = await navigator.permissions?.query({ name: "microphone" });
+    if (status?.state === "granted") return;
+  } catch {
+    // Permissions API without "microphone" (older Safari/Firefox): ask anyway.
+  }
+  const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+  s.getTracks().forEach((t) => t.stop());
 }
 
 export function speechSupported() {
@@ -106,24 +126,38 @@ function micLive() {
   return !!stream && stream.getAudioTracks().some((t) => t.readyState === "live");
 }
 
-export function micReady() {
-  return micLive();
-}
+// The mic is held only while recording: other apps (and the OS, when moving
+// Bluetooth earphones between devices) can't use it while we hold it, and
+// Bluetooth headsets drop to low-quality call audio while it is open.
+let opening = null;
 
-// Opens the microphone once and keeps it open, so recording can start the
-// instant the prompt ends. Call from a user gesture: it also unlocks the
-// AudioContext on iOS.
-export async function ensureMic() {
-  audioCtx();
+async function openMic() {
   if (micLive()) return;
   if (!recordingSupported()) throw new Error("Recording is not supported in this browser");
-  stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-  });
+  // Share one in-flight request so overlapping callers don't open two streams.
+  opening ??= navigator.mediaDevices
+    .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+    .then((s) => {
+      stream = s;
+    })
+    .finally(() => {
+      opening = null;
+    });
+  await opening;
 }
 
-export function beep(durationMs) {
-  const c = audioCtx();
+// Release only when no newer recording has taken over the mic.
+function releaseIfIdle() {
+  if (!active) releaseMic();
+}
+
+function releaseMic() {
+  stream?.getTracks().forEach((t) => t.stop());
+  stream = null;
+}
+
+async function beep(durationMs) {
+  const c = await audioCtx();
   const t = c.currentTime;
   const end = t + durationMs / 1000;
   const osc = c.createOscillator();
@@ -136,18 +170,42 @@ export function beep(durationMs) {
   osc.connect(gain).connect(c.destination);
   osc.start(t);
   osc.stop(end + 0.02);
-  return new Promise((r) => setTimeout(r, durationMs + 40));
+  await new Promise((r) => setTimeout(r, durationMs + 40));
 }
 
-// Records until `maxMs` passes, `stopRecording` is called, or — when
-// `silenceMs` > 0 — the input stays silent for `silenceMs` (the exam closes
-// the mic the same way). `onTick(level 0..1, elapsedMs, silentMs)` drives the
-// meter. Resolves `{ url, mime, durationMs, reason }`, or null when cancelled.
-export function record(maxMs, silenceMs, onTick) {
+// Opens the mic, optionally beeps, and records until `maxMs` passes,
+// `stopRecording` is called, or — when `silenceMs` > 0 — the input stays
+// silent for `silenceMs` (the exam closes the mic the same way). The mic is
+// released when it ends. `onStart()` fires when recording actually begins;
+// `onTick(level 0..1, elapsedMs, silentMs)` drives the meter. Resolves
+// `{ url, mime, durationMs, reason }`, or null when cancelled.
+export async function record(maxMs, silenceMs, beepMs, onStart, onTick) {
   if (active) active.finish("cancel");
+  // Claim the slot before the awaits so a cancel during mic start-up lands.
+  let cancelled = false;
+  const pending = {
+    recorder: null,
+    finish: () => {
+      cancelled = true;
+      if (active === pending) active = null;
+    },
+  };
+  active = pending;
+  let c;
+  try {
+    await openMic();
+    if (!cancelled && beepMs > 0) await beep(beepMs);
+    c = await audioCtx();
+  } catch (e) {
+    if (active === pending) active = null;
+    releaseIfIdle();
+    throw e;
+  }
+  if (cancelled) {
+    releaseIfIdle();
+    return null;
+  }
   return new Promise((resolve, reject) => {
-    if (!micLive()) return reject(new Error("Microphone is not ready"));
-    const c = audioCtx();
     const source = c.createMediaStreamSource(stream);
     const analyser = c.createAnalyser();
     analyser.fftSize = 2048;
@@ -173,6 +231,7 @@ export function record(maxMs, silenceMs, onTick) {
       else settle();
     };
     const settle = () => {
+      releaseIfIdle();
       if (failure) return reject(failure);
       if (reason === "cancel") return resolve(null);
       const mime = recorder.mimeType || chunks[0]?.type || "audio/webm";
@@ -210,6 +269,7 @@ export function record(maxMs, silenceMs, onTick) {
 
     active = { recorder, finish };
     recorder.start();
+    onStart();
   });
 }
 

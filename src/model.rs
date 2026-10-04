@@ -1,6 +1,8 @@
 // Domain types and pure helpers. Nothing here touches the browser, so it is
 // all covered by native `cargo test`.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::sentences::BUILTIN;
@@ -193,6 +195,36 @@ pub fn sentence_pool(settings: &Settings, sets: &[SentenceSet]) -> Vec<PoolEntry
         .collect()
 }
 
+/// One saved practice attempt (the recording itself is stored separately,
+/// keyed by `id`). Field names are camelCase on the JS / IndexedDB side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttemptRecord {
+    /// Assigned by IndexedDB on insert; `None` for an attempt that couldn't
+    /// be saved. Omitted when serializing so the store auto-increments it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u32>,
+    /// Unix epoch milliseconds.
+    pub at_ms: f64,
+    pub text: String,
+    pub source: String,
+    pub voice_label: String,
+    pub rate: f32,
+    pub duration_ms: u32,
+    /// Why recording stopped: `manual`, `timeout` or `silence`.
+    pub reason: String,
+    pub mime: String,
+}
+
+/// How many times each sentence (by text) has been practised.
+pub fn practice_counts(history: &[AttemptRecord]) -> HashMap<String, u32> {
+    let mut counts = HashMap::new();
+    for r in history {
+        *counts.entry(r.text.clone()).or_default() += 1;
+    }
+    counts
+}
+
 /// Draws indices without replacement so every sentence comes up once before
 /// any repeats, and never the same one twice in a row across refills.
 #[derive(Debug, Default)]
@@ -361,6 +393,42 @@ mod tests {
             .map(|v| v.name)
             .collect();
         assert_eq!(names, vec!["Google US English", "Daniel", "Karen"]);
+    }
+
+    fn attempt(text: &str) -> AttemptRecord {
+        AttemptRecord {
+            id: None,
+            at_ms: 0.0,
+            text: text.into(),
+            source: "s".into(),
+            voice_label: "v".into(),
+            rate: 1.0,
+            duration_ms: 1000,
+            reason: "manual".into(),
+            mime: "audio/webm".into(),
+        }
+    }
+
+    #[test]
+    fn counts_attempts_per_sentence() {
+        let counts = practice_counts(&[attempt("A."), attempt("B."), attempt("A.")]);
+        assert_eq!(counts.get("A."), Some(&2));
+        assert_eq!(counts.get("B."), Some(&1));
+        assert_eq!(counts.get("C."), None);
+    }
+
+    #[test]
+    fn attempt_record_omits_missing_id() {
+        let json = serde_json::to_value(attempt("A.")).unwrap();
+        assert!(json.get("id").is_none());
+        assert_eq!(json["atMs"], 0.0);
+        assert_eq!(json["voiceLabel"], "v");
+        let back: AttemptRecord = serde_json::from_value(
+            serde_json::json!({"id": 7, "atMs": 1.0, "text": "A.", "source": "s",
+                "voiceLabel": "v", "rate": 1.0, "durationMs": 5, "reason": "silence", "mime": "m"}),
+        )
+        .unwrap();
+        assert_eq!(back.id, Some(7));
     }
 
     #[test]

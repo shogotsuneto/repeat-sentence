@@ -1,5 +1,7 @@
 mod app;
 mod audio;
+mod history;
+mod history_tab;
 mod library;
 mod model;
 mod panic_hook;

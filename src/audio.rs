@@ -22,16 +22,14 @@ extern "C" {
     fn speak_js(text: &str, voice_uri: &str, rate: f32) -> js_sys::Promise;
     #[wasm_bindgen(js_name = stopSpeaking)]
     pub fn stop_speaking();
-    #[wasm_bindgen(js_name = micReady)]
-    pub fn mic_ready() -> bool;
-    #[wasm_bindgen(js_name = ensureMic)]
-    fn ensure_mic_js() -> js_sys::Promise;
-    #[wasm_bindgen(js_name = beep)]
-    fn beep_js(duration_ms: u32) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = prime)]
+    fn prime_js() -> js_sys::Promise;
     #[wasm_bindgen(js_name = record)]
     fn record_js(
         max_ms: u32,
         silence_ms: u32,
+        beep_ms: u32,
+        on_start: &Closure<dyn FnMut()>,
         on_tick: &Closure<dyn FnMut(f64, f64, f64)>,
     ) -> js_sys::Promise;
     #[wasm_bindgen(js_name = stopRecording)]
@@ -54,14 +52,14 @@ pub struct Recording {
     pub reason: String,
 }
 
-fn js_error(e: JsValue) -> String {
+pub(crate) fn js_error(e: JsValue) -> String {
     e.dyn_ref::<js_sys::Error>()
         .map(|err| String::from(err.message()))
         .or_else(|| e.as_string())
         .unwrap_or_else(|| format!("{e:?}"))
 }
 
-async fn call(promise: js_sys::Promise) -> Result<JsValue, String> {
+pub(crate) async fn call(promise: js_sys::Promise) -> Result<JsValue, String> {
     JsFuture::from(promise).await.map_err(js_error)
 }
 
@@ -91,26 +89,30 @@ pub async fn speak(text: &str, voice_uri: &str, rate: f32) -> Result<bool, Strin
         .map(|v| v.as_bool().unwrap_or(false))
 }
 
-pub async fn ensure_mic() -> Result<(), String> {
-    call(ensure_mic_js()).await.map(|_| ())
+/// Call from the Start click: unlocks audio playback and gets microphone
+/// permission up front (asking now if needed, then releasing the mic).
+pub async fn prime() -> Result<(), String> {
+    call(prime_js()).await.map(|_| ())
 }
 
-pub async fn beep(duration_ms: u32) {
-    let _ = call(beep_js(duration_ms)).await;
-}
-
-/// Records until stopped, timed out, or silent for `silence_ms` (0 = never).
-/// `on_tick(level, elapsed_ms, silent_ms)` fires every ~50 ms. `Ok(None)`
-/// means the recording was cancelled and nothing was kept.
+/// Opens the mic, beeps for `beep_ms` (0 = no beep), then records until
+/// stopped, timed out, or silent for `silence_ms` (0 = never). The mic is
+/// held only for the duration of this call. `on_start` fires when recording
+/// begins; `on_tick(level, elapsed_ms, silent_ms)` every ~50 ms after.
+/// `Ok(None)` means it was cancelled and nothing was kept.
 pub async fn record(
     max_ms: u32,
     silence_ms: u32,
+    beep_ms: u32,
+    on_start: impl FnMut() + 'static,
     on_tick: impl FnMut(f64, f64, f64) + 'static,
 ) -> Result<Option<Recording>, String> {
-    let cb = Closure::<dyn FnMut(f64, f64, f64)>::new(on_tick);
-    // `cb` must outlive the promise: JS stops ticking before it settles.
-    let v = call(record_js(max_ms, silence_ms, &cb)).await?;
-    drop(cb);
+    let start_cb = Closure::<dyn FnMut()>::new(on_start);
+    let tick_cb = Closure::<dyn FnMut(f64, f64, f64)>::new(on_tick);
+    // The closures must outlive the promise: JS stops calling them before it
+    // settles.
+    let v = call(record_js(max_ms, silence_ms, beep_ms, &start_cb, &tick_cb)).await?;
+    drop((start_cb, tick_cb));
     if v.is_null() || v.is_undefined() {
         return Ok(None);
     }
