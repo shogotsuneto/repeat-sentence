@@ -173,13 +173,14 @@ async function beep(durationMs) {
   await new Promise((r) => setTimeout(r, durationMs + 40));
 }
 
-// Opens the mic, optionally beeps, and records until `maxMs` passes,
+// Waits `delayMs` after the prompt (opening the mic meanwhile), optionally
+// beeps, and records until `maxMs` passes,
 // `stopRecording` is called, or — when `silenceMs` > 0 — the input stays
 // silent for `silenceMs` (the exam closes the mic the same way). The mic is
 // released when it ends. `onStart()` fires when recording actually begins;
 // `onTick(level 0..1, elapsedMs, silentMs)` drives the meter. Resolves
 // `{ url, mime, durationMs, reason }`, or null when cancelled.
-export async function record(maxMs, silenceMs, beepMs, onStart, onTick) {
+export async function record(maxMs, silenceMs, delayMs, beepMs, onStart, onTick) {
   if (active) active.finish("cancel");
   // Claim the slot before the awaits so a cancel during mic start-up lands.
   let cancelled = false;
@@ -193,7 +194,9 @@ export async function record(maxMs, silenceMs, beepMs, onStart, onTick) {
   active = pending;
   let c;
   try {
-    await openMic();
+    // The delay runs from the end of the prompt, so mic start-up time is
+    // absorbed into it rather than added on top.
+    await Promise.all([openMic(), new Promise((r) => setTimeout(r, delayMs))]);
     if (!cancelled && beepMs > 0) await beep(beepMs);
     c = await audioCtx();
   } catch (e) {

@@ -130,6 +130,8 @@ pub struct Settings {
     pub auto_record: bool,
     /// Short tone right before recording starts.
     pub beep: bool,
+    /// Pause between the end of the prompt and the start of recording.
+    pub record_delay_ms: u32,
     pub max_record_secs: u32,
     /// Stop recording after this long without voice. 0 disables it.
     pub silence_stop_secs: u32,
@@ -147,6 +149,7 @@ impl Default for Settings {
             presets: Vec::new(),
             auto_record: true,
             beep: true,
+            record_delay_ms: 1500,
             max_record_secs: 15,
             silence_stop_secs: 3,
             pre_delay_secs: 1,
@@ -436,5 +439,6 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"auto_record":false}"#).unwrap();
         assert!(!s.auto_record);
         assert_eq!(s.max_record_secs, 15);
+        assert_eq!(s.record_delay_ms, 1500);
     }
 }

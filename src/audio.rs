@@ -28,6 +28,7 @@ extern "C" {
     fn record_js(
         max_ms: u32,
         silence_ms: u32,
+        delay_ms: u32,
         beep_ms: u32,
         on_start: &Closure<dyn FnMut()>,
         on_tick: &Closure<dyn FnMut(f64, f64, f64)>,
@@ -95,7 +96,8 @@ pub async fn prime() -> Result<(), String> {
     call(prime_js()).await.map(|_| ())
 }
 
-/// Opens the mic, beeps for `beep_ms` (0 = no beep), then records until
+/// Waits `delay_ms` (opening the mic meanwhile), beeps for `beep_ms`
+/// (0 = no beep), then records until
 /// stopped, timed out, or silent for `silence_ms` (0 = never). The mic is
 /// held only for the duration of this call. `on_start` fires when recording
 /// begins; `on_tick(level, elapsed_ms, silent_ms)` every ~50 ms after.
@@ -103,6 +105,7 @@ pub async fn prime() -> Result<(), String> {
 pub async fn record(
     max_ms: u32,
     silence_ms: u32,
+    delay_ms: u32,
     beep_ms: u32,
     on_start: impl FnMut() + 'static,
     on_tick: impl FnMut(f64, f64, f64) + 'static,
@@ -111,7 +114,10 @@ pub async fn record(
     let tick_cb = Closure::<dyn FnMut(f64, f64, f64)>::new(on_tick);
     // The closures must outlive the promise: JS stops calling them before it
     // settles.
-    let v = call(record_js(max_ms, silence_ms, beep_ms, &start_cb, &tick_cb)).await?;
+    let v = call(record_js(
+        max_ms, silence_ms, delay_ms, beep_ms, &start_cb, &tick_cb,
+    ))
+    .await?;
     drop((start_cb, tick_cb));
     if v.is_null() || v.is_undefined() {
         return Ok(None);

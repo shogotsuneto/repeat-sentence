@@ -6,7 +6,7 @@ A browser app for practising the **Repeat Sentence** task of PTE Core, built wit
 
 ## Features
 
-- A sentence is read aloud with the Web Speech API, then recording starts immediately — like the exam, it stops after 15 s or 3 s of silence (both configurable)
+- A sentence is read aloud with the Web Speech API, then — after a short pause and a beep (1.5 s by default, adjustable) — recording starts; like the exam, it stops after 15 s or 3 s of silence (both configurable)
 - Each question picks a **random voice preset** (voice + speaking rate) from a pool you build; on first visit the pool is seeded with one voice per English accent (US, UK, AU, IN, …)
 - 48 built-in sentences; add your own from **plain-text** files (one sentence per line) or by pasting
 - Sentences are drawn without repeats until the whole pool has been used
