@@ -16,20 +16,51 @@ let queue = Promise.resolve();
 const cache = new Map(); // key -> blob URL
 const CACHE_SIZE = 8;
 
-// Best backend for this device. WebGPU with fp16 is ~1 s per sentence on a
-// laptop; fp32 is as fast but twice the download; WebGPU with quantized
-// weights is very slow, so without WebGPU fall back to WASM + q8 (smallest
-// download, but several seconds per sentence).
+// Best backend for this device: WebGPU with fp32 (~1 s per sentence). fp16
+// is half the download but produced heavy noise on an iPhone, so it's only
+// offered as a manual choice; WebGPU with quantized weights is very slow.
+// Without WebGPU fall back to WASM + q8 (smallest download, but several
+// seconds per sentence).
 export async function detectBackend() {
   try {
-    const adapter = await navigator.gpu?.requestAdapter();
-    if (adapter) {
-      return adapter.features.has("shader-f16") ? "webgpu/fp16" : "webgpu/fp32";
-    }
+    if (await navigator.gpu?.requestAdapter()) return "webgpu/fp32";
   } catch {
     // WebGPU present but unusable: fall through.
   }
   return "wasm/q8";
+}
+
+// Transformers.js names the weights file by dtype.
+const MODEL_FILE = { fp32: "model.onnx", fp16: "model_fp16.onnx", q8: "model_quantized.onnx" };
+
+// Whether the weights for `backend` ("device/dtype") are already
+// downloaded, so loading won't hit the network for the big file.
+export async function isCached(backend) {
+  try {
+    const file = MODEL_FILE[backend.split("/")[1]];
+    const cache = await globalThis.caches?.open("transformers-cache");
+    const keys = (await cache?.keys()) ?? [];
+    return keys.some((req) => req.url.endsWith(`/onnx/${file}`));
+  } catch {
+    return false;
+  }
+}
+
+// Drops cached weights for other dtypes (e.g. fp16 after switching to fp32)
+// so an old download doesn't keep taking up 100+ MB.
+async function pruneOtherWeights(dtype) {
+  try {
+    const cache = await globalThis.caches?.open("transformers-cache");
+    if (!cache) return;
+    const keep = `/onnx/${MODEL_FILE[dtype]}`;
+    for (const req of await cache.keys()) {
+      if (/\/onnx\/model(_\w+)?\.onnx$/.test(req.url) && !req.url.endsWith(keep)) {
+        await cache.delete(req);
+      }
+    }
+  } catch {
+    // Best effort.
+  }
 }
 
 export function loadedBackend() {
@@ -68,6 +99,7 @@ export function load(backend, onProgress) {
     tts = model;
     loaded = backend;
     clearCache();
+    pruneOtherWeights(dtype);
   })().finally(() => {
     if (loading?.promise === promise) loading = null;
   });

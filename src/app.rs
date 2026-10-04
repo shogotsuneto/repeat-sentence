@@ -133,14 +133,19 @@ pub fn App() -> impl IntoView {
         state.voices.set(voices);
     });
     audio::on_voices_changed(move |v| state.voices.set(v));
-    // The model is cached after the first download; warm it up in the
-    // background when the pool uses Kokoro voices.
+    // Warm the model up in the background when the pool uses Kokoro voices
+    // — but only from cache: if the configured backend's weights aren't
+    // downloaded yet (e.g. Auto now resolves differently), don't start a
+    // 100+ MB download unasked; it loads when first needed instead.
     let uses_kokoro = state.settings.with_untracked(|s| {
         s.kokoro_enabled && s.presets.iter().any(|p| p.engine == Engine::Kokoro)
     });
     if uses_kokoro {
         spawn_local(async move {
-            let _ = state.ensure_kokoro().await;
+            let backend = state.settings.with_untracked(|s| s.kokoro_backend);
+            if kokoro::is_cached(backend).await {
+                let _ = state.ensure_kokoro().await;
+            }
         });
     }
     spawn_local(async move {
