@@ -35,8 +35,30 @@ impl VoiceInfo {
         NOVELTY_VOICES.contains(&base)
     }
 
+    /// Apple platforms list the same voice name at several quality levels
+    /// (e.g. `com.apple.voice.compact.en-US.Samantha` and
+    /// `com.apple.voice.enhanced.en-US.Samantha`); only the URI tells them
+    /// apart.
+    pub fn quality(&self) -> Option<&'static str> {
+        let uri = self.uri.to_ascii_lowercase();
+        let name = self.name.to_ascii_lowercase();
+        if uri.contains(".premium.") || name.contains("premium") {
+            Some("Premium")
+        } else if uri.contains(".enhanced.") || name.contains("enhanced") {
+            Some("Enhanced")
+        } else {
+            None
+        }
+    }
+
     pub fn label(&self) -> String {
-        format!("{} ({})", self.name, self.lang_tag())
+        match self.quality() {
+            // Don't repeat a quality the name already carries ("Ava (Premium)").
+            Some(q) if !self.name.contains(q) => {
+                format!("{} · {q} ({})", self.name, self.lang_tag())
+            }
+            _ => format!("{} ({})", self.name, self.lang_tag()),
+        }
     }
 }
 
@@ -80,12 +102,18 @@ const ACCENTS: &[&str] = &[
 pub fn suggest_voices(voices: &[VoiceInfo]) -> Vec<VoiceInfo> {
     fn score(v: &VoiceInfo) -> u8 {
         let n = v.name.to_ascii_lowercase();
-        let premium = [
-            "natural", "neural", "online", "google", "premium", "enhanced",
-        ]
-        .iter()
-        .any(|k| n.contains(k));
-        u8::from(premium) * 2 + u8::from(v.local)
+        let quality = match v.quality() {
+            Some("Premium") => 3,
+            Some(_) => 2,
+            None if ["natural", "neural", "online", "google"]
+                .iter()
+                .any(|k| n.contains(k)) =>
+            {
+                2
+            }
+            None => 0,
+        };
+        quality * 2 + u8::from(v.local)
     }
 
     ACCENTS
@@ -376,6 +404,26 @@ mod tests {
         assert!(voice("Zarvox", "en-US").is_novelty());
         assert!(voice("Eddy (English (US))", "en-US").is_novelty());
         assert!(!voice("Samantha", "en-US").is_novelty());
+    }
+
+    #[test]
+    fn apple_voice_quality_from_uri() {
+        let v = |uri: &str, name: &str| VoiceInfo {
+            uri: uri.into(),
+            name: name.into(),
+            lang: "en-US".into(),
+            local: true,
+        };
+        let compact = v("com.apple.voice.compact.en-US.Samantha", "Samantha");
+        let enhanced = v("com.apple.voice.enhanced.en-US.Samantha", "Samantha");
+        let premium = v("com.apple.voice.premium.en-US.Zoe", "Zoe (Premium)");
+        assert_eq!(compact.quality(), None);
+        assert_eq!(compact.label(), "Samantha (en-US)");
+        assert_eq!(enhanced.label(), "Samantha · Enhanced (en-US)");
+        assert_eq!(premium.label(), "Zoe (Premium) (en-US)");
+        // Same name at two quality levels: the better one is suggested.
+        let picked = suggest_voices(&[compact, enhanced.clone()]);
+        assert_eq!(picked, vec![enhanced]);
     }
 
     #[test]

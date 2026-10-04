@@ -108,6 +108,11 @@ pub fn Voices() -> impl IntoView {
                     "Add the same voice at several rates to vary speed. "
                     "Available voices depend on your browser and OS — presets missing here are skipped."
                 </p>
+                <p class=MUTED>
+                    "iPhone / iPad: voices downloaded in Settings → Accessibility → Spoken Content → Voices "
+                    "show up as “Enhanced” or “Premium” after Safari is fully closed and reopened. "
+                    "Siri voices are not available to websites."
+                </p>
                 <Show
                     when=move || app.settings.with(|s| !s.presets.is_empty())
                     fallback=|| {
