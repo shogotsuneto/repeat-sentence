@@ -22,6 +22,7 @@ features = [
   "FileList",
   "HtmlInputElement",
   "KeyboardEvent",
+  "Clipboard",
   "Navigator",
   "Storage",
   "Url",

@@ -21,6 +21,8 @@ pub fn install() {
     std::panic::set_hook(Box::new(|info| {
         // A fresh JS Error captures the JS-side stack, which includes the
         // wasm frames leading to the panic.
-        error(format!("{info}\n\nStack:\n\n{}\n", Error::new().stack()));
+        let msg = format!("{info}\n\nStack:\n\n{}\n", Error::new().stack());
+        crate::diag::log(format!("panic {msg}"));
+        error(msg);
     }));
 }

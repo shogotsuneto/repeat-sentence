@@ -3,8 +3,9 @@
 use leptos::prelude::*;
 
 use crate::app::AppState;
+use crate::diag;
 use crate::model::{Reveal, Settings};
-use crate::ui::{CARD, HEADING, INPUT, MUTED, Toggle};
+use crate::ui::{BTN_DANGER, BTN_SMALL, CARD, HEADING, INPUT, MUTED, Toggle};
 
 /// A number input bound to one `u32` field of `Settings`, clamped to
 /// `min..=max`.
@@ -142,6 +143,60 @@ pub fn SettingsTab() -> impl IntoView {
                     })
                 />
             </section>
+
+            <Diagnostics />
         </div>
+    }
+}
+
+/// The crash-surviving event log (`diag`), for debugging reloads / crashes
+/// on devices without a debugger attached.
+#[component]
+fn Diagnostics() -> impl IntoView {
+    let text = RwSignal::new(String::new());
+    let copied = RwSignal::new(false);
+    let refresh = move || {
+        text.set(diag::entries_text());
+        copied.set(false);
+    };
+    let copy = move |_| {
+        if let Some(w) = web_sys::window() {
+            let _ = w.navigator().clipboard().write_text(&text.get_untracked());
+            copied.set(true);
+        }
+    };
+
+    view! {
+        <section class=format!("{CARD} flex flex-col gap-3")>
+            <h2 class=HEADING>"Diagnostics"</h2>
+            <p class=MUTED>
+                "An event log kept on this device that survives the page being killed and reloaded "
+                "(e.g. when iOS runs low on memory). If the app crashes or restarts, copy this log "
+                "right after it happens. It stays on this device unless you copy it."
+            </p>
+            <details on:toggle=move |_| refresh()>
+                <summary class=format!("cursor-pointer {MUTED}")>"Show event log"</summary>
+                <div class="mt-2 flex flex-wrap gap-2">
+                    <button class=BTN_SMALL on:click=move |_| refresh()>
+                        "Refresh"
+                    </button>
+                    <button class=BTN_SMALL on:click=copy>
+                        {move || if copied.get() { "Copied ✓" } else { "Copy" }}
+                    </button>
+                    <button
+                        class=BTN_DANGER
+                        on:click=move |_| {
+                            diag::clear_log();
+                            refresh();
+                        }
+                    >
+                        "Clear"
+                    </button>
+                </div>
+                <pre class="mt-2 max-h-96 overflow-auto rounded-lg bg-zinc-100 p-3 text-xs whitespace-pre-wrap break-all select-text dark:bg-zinc-950">
+                    {move || text.get()}
+                </pre>
+            </details>
+        </section>
     }
 }
