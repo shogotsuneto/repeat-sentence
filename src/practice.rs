@@ -7,9 +7,9 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 
 use crate::app::AppState;
-use crate::audio;
-use crate::model::{PoolEntry, Reveal, ShuffleBag, pick_index, sentence_pool};
+use crate::model::{AttemptRecord, PoolEntry, Reveal, ShuffleBag, pick_index, sentence_pool};
 use crate::ui::{BADGE, BTN, BTN_PRIMARY, BTN_SMALL, CARD, MUTED, clock, rate_label};
+use crate::{audio, history};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
@@ -17,6 +17,8 @@ enum Phase {
     /// Short pause before the prompt plays.
     Waiting,
     Speaking,
+    /// Prompt done; waiting for the microphone (and beep) before recording.
+    OpeningMic,
     Recording,
     Review,
 }
@@ -31,11 +33,14 @@ struct Item {
     rate: f32,
 }
 
+/// An attempt made in this session. `url` is the live blob URL of the
+/// recording; the same attempt is also saved to the persistent history.
 #[derive(Clone, PartialEq, Debug)]
 struct Attempt {
-    id: u32,
-    item: Item,
-    rec: audio::Recording,
+    /// Sequence number within this session.
+    seq: u32,
+    record: AttemptRecord,
+    url: String,
 }
 
 /// The practice screen's signals bundled for the async flow. Every flow
@@ -52,7 +57,7 @@ struct Session {
     /// The latest attempt at the current item.
     attempt: RwSignal<Option<Attempt>>,
     /// All attempts this session, newest first.
-    history: RwSignal<Vec<Attempt>>,
+    session: RwSignal<Vec<Attempt>>,
     level: RwSignal<f64>,
     elapsed_ms: RwSignal<u32>,
     silent_ms: RwSignal<u32>,
@@ -123,15 +128,15 @@ impl Session {
         let settings = self.app.settings.get_untracked();
 
         spawn_local(async move {
-            if settings.auto_record {
-                // Opening the mic up front (from the click's user gesture)
-                // means recording can start the instant the prompt ends.
-                if let Err(e) = audio::ensure_mic().await {
-                    self.error.set(Some(format!("Microphone unavailable: {e}")));
-                }
-                if !self.is_current(v) {
-                    return;
-                }
+            // While we still have the click's user gesture: unlock audio and
+            // settle mic permission so no prompt interrupts the attempt. The
+            // mic itself is only opened once the prompt has finished.
+            let primed = audio::prime().await;
+            if let (true, Err(e)) = (settings.auto_record, primed) {
+                self.error.set(Some(format!("Microphone unavailable: {e}")));
+            }
+            if !self.is_current(v) {
+                return;
             }
             if settings.pre_delay_secs > 0 {
                 self.phase.set(Phase::Waiting);
@@ -156,7 +161,7 @@ impl Session {
             if !self.is_current(v) {
                 return;
             }
-            if settings.auto_record && audio::mic_ready() {
+            if settings.auto_record && audio::recording_supported() {
                 self.record(v).await;
             } else {
                 self.phase.set(Phase::Review);
@@ -166,21 +171,18 @@ impl Session {
 
     async fn record(self, v: u32) {
         let settings = self.app.settings.get_untracked();
-        if settings.beep {
-            audio::beep(120).await;
-            if !self.is_current(v) {
-                return;
-            }
-        }
         self.level.set(0.0);
         self.elapsed_ms.set(0);
         self.silent_ms.set(0);
-        self.phase.set(Phase::Recording);
+        self.phase.set(Phase::OpeningMic);
 
-        let (level, elapsed_ms, silent_ms) = (self.level, self.elapsed_ms, self.silent_ms);
+        let (phase, level, elapsed_ms, silent_ms) =
+            (self.phase, self.level, self.elapsed_ms, self.silent_ms);
         let result = audio::record(
             settings.max_record_secs * 1000,
             settings.silence_stop_secs * 1000,
+            if settings.beep { 120 } else { 0 },
+            move || phase.set(Phase::Recording),
             move |lvl, el, si| {
                 level.set(lvl);
                 elapsed_ms.set(el as u32);
@@ -198,10 +200,7 @@ impl Session {
         match result {
             Ok(Some(rec)) => {
                 if let Some(item) = self.item.get_untracked() {
-                    let id = self.history.with_untracked(|h| h.len() as u32 + 1);
-                    let attempt = Attempt { id, item, rec };
-                    self.history.update(|h| h.insert(0, attempt.clone()));
-                    self.attempt.set(Some(attempt));
+                    self.keep(item, rec);
                 }
             }
             Ok(None) => {}
@@ -211,12 +210,46 @@ impl Session {
         self.phase.set(Phase::Review);
     }
 
+    /// Adds a finished recording to the session list and saves it to the
+    /// persistent history in the background.
+    fn keep(self, item: Item, rec: audio::Recording) {
+        let record = AttemptRecord {
+            id: None,
+            at_ms: js_sys::Date::now(),
+            text: item.text,
+            source: item.source,
+            voice_label: item.voice_label,
+            rate: item.rate,
+            duration_ms: rec.duration_ms,
+            reason: rec.reason,
+            mime: rec.mime,
+        };
+        let seq = self.session.with_untracked(|h| h.len() as u32 + 1);
+        let attempt = Attempt {
+            seq,
+            record: record.clone(),
+            url: rec.url,
+        };
+        self.session.update(|h| h.insert(0, attempt.clone()));
+        self.attempt.set(Some(attempt.clone()));
+
+        let app = self.app;
+        spawn_local(async move {
+            match history::save(record, &attempt.url).await {
+                Ok(saved) => app.history.update(|h| h.insert(0, saved)),
+                Err(e) => app
+                    .history_error
+                    .set(Some(format!("Couldn't save to history: {e}"))),
+            }
+        });
+    }
+
     /// Record another attempt at the current item without replaying it.
     fn record_again(self) {
         self.interrupt();
         let v = self.bump();
         spawn_local(async move {
-            if let Err(e) = audio::ensure_mic().await {
+            if let Err(e) = audio::prime().await {
                 self.error.set(Some(format!("Microphone unavailable: {e}")));
                 return;
             }
@@ -249,7 +282,7 @@ impl Session {
         match self.phase.get_untracked() {
             // Keeps what was recorded so far.
             Phase::Recording => audio::stop_recording(),
-            Phase::Waiting | Phase::Speaking => {
+            Phase::Waiting | Phase::Speaking | Phase::OpeningMic => {
                 self.bump();
                 self.interrupt();
                 self.phase.set(Phase::Review);
@@ -263,21 +296,22 @@ impl Session {
         match self.phase.get_untracked() {
             Phase::Idle | Phase::Review => self.next(),
             Phase::Recording => self.stop(),
-            Phase::Waiting | Phase::Speaking => {}
+            Phase::Waiting | Phase::Speaking | Phase::OpeningMic => {}
         }
     }
 
-    fn clear_history(self) {
-        self.history.update(|h| {
+    /// Clears the session list only; saved history is kept.
+    fn clear_session(self) {
+        self.session.update(|h| {
             for a in h.drain(..) {
-                audio::revoke_url(&a.rec.url);
+                audio::revoke_url(&a.url);
             }
         });
         self.attempt.set(None);
     }
 }
 
-fn file_extension(mime: &str) -> &'static str {
+pub fn file_extension(mime: &str) -> &'static str {
     match mime {
         m if m.contains("mp4") || m.contains("aac") => "m4a",
         m if m.contains("ogg") => "ogg",
@@ -286,7 +320,7 @@ fn file_extension(mime: &str) -> &'static str {
     }
 }
 
-fn stop_reason(reason: &str) -> &'static str {
+pub fn stop_reason(reason: &str) -> &'static str {
     match reason {
         "silence" => "stopped after silence",
         "timeout" => "time limit reached",
@@ -309,7 +343,7 @@ pub fn Practice() -> impl IntoView {
         phase: RwSignal::new(Phase::Idle),
         item: RwSignal::new(None),
         attempt: RwSignal::new(None),
-        history: RwSignal::new(Vec::new()),
+        session: RwSignal::new(Vec::new()),
         level: RwSignal::new(0.0),
         elapsed_ms: RwSignal::new(0),
         silent_ms: RwSignal::new(0),
@@ -364,6 +398,7 @@ pub fn Practice() -> impl IntoView {
         Phase::Idle => "Ready".to_string(),
         Phase::Waiting => "Get ready…".to_string(),
         Phase::Speaking => "Listen".to_string(),
+        Phase::OpeningMic => "Get ready to speak…".to_string(),
         Phase::Recording => format!(
             "Recording  {} / {}",
             clock(s.elapsed_ms.get()),
@@ -381,6 +416,7 @@ pub fn Practice() -> impl IntoView {
                             Phase::Idle => "bg-zinc-400",
                             Phase::Waiting => "bg-sky-500",
                             Phase::Speaking => "bg-sky-500 animate-pulse",
+                            Phase::OpeningMic => "bg-rose-300",
                             Phase::Recording => "bg-rose-500 animate-pulse",
                             Phase::Review => "bg-emerald-500",
                         };
@@ -460,11 +496,21 @@ pub fn Practice() -> impl IntoView {
                     s.item
                         .get()
                         .map(|item| {
+                            let text = item.text.clone();
+                            let times = move || {
+                                app.counts.with(|c| c.get(&text).copied().unwrap_or(0))
+                            };
                             view! {
                                 <div class="flex flex-wrap justify-center gap-2">
                                     <span class=BADGE>{item.voice_label}</span>
                                     <span class=BADGE>{rate_label(item.rate)}</span>
                                     <span class=BADGE>{item.source}</span>
+                                    <span class=BADGE>
+                                        {move || match times() {
+                                            0 => "New".to_string(),
+                                            n => format!("Practised {n}×"),
+                                        }}
+                                    </span>
                                 </div>
                             }
                         })
@@ -474,7 +520,12 @@ pub fn Practice() -> impl IntoView {
                     <button
                         class=BTN_PRIMARY
                         on:click=move |_| s.primary()
-                        disabled=move || matches!(phase.get(), Phase::Waiting | Phase::Speaking)
+                        disabled=move || {
+                            matches!(
+                                phase.get(),
+                                Phase::Waiting | Phase::Speaking | Phase::OpeningMic
+                            )
+                        }
                     >
                         {move || match phase.get() {
                             Phase::Idle => "Start",
@@ -482,7 +533,9 @@ pub fn Practice() -> impl IntoView {
                             _ => "Next",
                         }}
                     </button>
-                    <Show when=move || matches!(phase.get(), Phase::Waiting | Phase::Speaking)>
+                    <Show when=move || {
+                        matches!(phase.get(), Phase::Waiting | Phase::Speaking | Phase::OpeningMic)
+                    }>
                         <button class=BTN on:click=move |_| s.stop()>
                             "Stop"
                         </button>
@@ -513,12 +566,12 @@ pub fn Practice() -> impl IntoView {
                         .map(|a| {
                             view! {
                                 <div class="flex w-full max-w-md flex-col items-center gap-1">
-                                    <audio class="w-full" controls src=a.rec.url.clone()></audio>
+                                    <audio class="w-full" controls src=a.url.clone()></audio>
                                     <p class=MUTED>
                                         {format!(
                                             "Your answer · {} · {}",
-                                            clock(a.rec.duration_ms),
-                                            stop_reason(&a.rec.reason),
+                                            clock(a.record.duration_ms),
+                                            stop_reason(&a.record.reason),
                                         )}
                                     </p>
                                 </div>
@@ -544,52 +597,48 @@ pub fn Practice() -> impl IntoView {
                 <div class="flex items-center justify-between">
                     <h2 class="text-lg font-semibold">
                         "This session "
-                        <span class=MUTED>{move || format!("({})", s.history.with(Vec::len))}</span>
+                        <span class=MUTED>{move || format!("({})", s.session.with(Vec::len))}</span>
                     </h2>
-                    <Show when=move || s.history.with(|h| !h.is_empty())>
-                        <button class=BTN_SMALL on:click=move |_| s.clear_history()>
+                    <Show when=move || s.session.with(|h| !h.is_empty())>
+                        <button class=BTN_SMALL on:click=move |_| s.clear_session()>
                             "Clear"
                         </button>
                     </Show>
                 </div>
                 <Show
-                    when=move || s.history.with(|h| !h.is_empty())
+                    when=move || s.session.with(|h| !h.is_empty())
                     fallback=|| {
                         view! {
                             <p class=MUTED>
-                                "Recordings appear here. They are kept only until you close or reload the page."
+                                "Recordings from this session appear here. Every attempt is also saved to the History tab."
                             </p>
                         }
                     }
                 >
                     <ul class="flex flex-col gap-3">
-                        <For each=move || s.history.get() key=|a| a.id let(a)>
+                        <For each=move || s.session.get() key=|a| a.seq let(a)>
                             <li class=format!("{CARD} flex flex-col gap-2 p-4")>
                                 <p class="font-medium">
-                                    <span class="mr-2 text-zinc-400">{format!("#{}", a.id)}</span>
-                                    {a.item.text.clone()}
+                                    <span class="mr-2 text-zinc-400">{format!("#{}", a.seq)}</span>
+                                    {a.record.text.clone()}
                                 </p>
                                 <p class=MUTED>
                                     {format!(
                                         "{} · {} · {}",
-                                        a.item.voice_label,
-                                        rate_label(a.item.rate),
-                                        clock(a.rec.duration_ms),
+                                        a.record.voice_label,
+                                        rate_label(a.record.rate),
+                                        clock(a.record.duration_ms),
                                     )}
                                 </p>
                                 <div class="flex items-center gap-3">
-                                    <audio
-                                        class="h-10 flex-1"
-                                        controls
-                                        src=a.rec.url.clone()
-                                    ></audio>
+                                    <audio class="h-10 flex-1" controls src=a.url.clone()></audio>
                                     <a
                                         class=BTN_SMALL
-                                        href=a.rec.url.clone()
+                                        href=a.url.clone()
                                         download=format!(
                                             "repeat-sentence-{}.{}",
-                                            a.id,
-                                            file_extension(&a.rec.mime),
+                                            a.seq,
+                                            file_extension(&a.record.mime),
                                         )
                                     >
                                         "Download"

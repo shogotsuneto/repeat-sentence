@@ -1,13 +1,18 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 
-use crate::audio;
+use std::collections::HashMap;
+
+use crate::history_tab::HistoryTab;
 use crate::library::Library;
-use crate::model::{SentenceSet, Settings, VoiceInfo, VoicePreset, suggest_voices};
+use crate::model::{
+    AttemptRecord, SentenceSet, Settings, VoiceInfo, VoicePreset, practice_counts, suggest_voices,
+};
 use crate::practice::Practice;
 use crate::settings_tab::SettingsTab;
 use crate::storage;
 use crate::voices::Voices;
+use crate::{audio, history};
 
 /// App-wide state, provided as context. Everything persisted lives here;
 /// `Effect`s write it back to localStorage on change.
@@ -17,6 +22,12 @@ pub struct AppState {
     pub sets: RwSignal<Vec<SentenceSet>>,
     /// Voices this browser offers. Empty until they load (or if unsupported).
     pub voices: RwSignal<Vec<VoiceInfo>>,
+    /// Saved attempts (IndexedDB), newest first.
+    pub history: RwSignal<Vec<AttemptRecord>>,
+    /// Set when history can't be loaded or saved (e.g. private browsing).
+    pub history_error: RwSignal<Option<String>>,
+    /// Attempts per sentence text, derived from `history`.
+    pub counts: Memo<HashMap<String, u32>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -24,17 +35,25 @@ enum Tab {
     Practice,
     Sentences,
     Voices,
+    History,
     Settings,
 }
 
 impl Tab {
-    const ALL: [Tab; 4] = [Tab::Practice, Tab::Sentences, Tab::Voices, Tab::Settings];
+    const ALL: [Tab; 5] = [
+        Tab::Practice,
+        Tab::Sentences,
+        Tab::Voices,
+        Tab::History,
+        Tab::Settings,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Tab::Practice => "Practice",
             Tab::Sentences => "Sentences",
             Tab::Voices => "Voices",
+            Tab::History => "History",
             Tab::Settings => "Settings",
         }
     }
@@ -44,10 +63,14 @@ impl Tab {
 pub fn App() -> impl IntoView {
     let stored = storage::load_settings();
     let first_visit = stored.is_none();
+    let history = RwSignal::new(Vec::new());
     let state = AppState {
         settings: RwSignal::new(stored.unwrap_or_default()),
         sets: RwSignal::new(storage::load_sets()),
         voices: RwSignal::new(Vec::new()),
+        history,
+        history_error: RwSignal::new(None),
+        counts: Memo::new(move |_| history.with(|h| practice_counts(h))),
     };
     provide_context(state);
 
@@ -73,6 +96,15 @@ pub fn App() -> impl IntoView {
         state.voices.set(voices);
     });
     audio::on_voices_changed(move |v| state.voices.set(v));
+    spawn_local(async move {
+        match history::list().await {
+            // Attempts saved before the list arrived are already in it.
+            Ok(saved) => state.history.set(saved),
+            Err(e) => state
+                .history_error
+                .set(Some(format!("History is unavailable: {e}"))),
+        }
+    });
 
     let tab = RwSignal::new(Tab::Practice);
     let speech_ok = audio::speech_supported();
@@ -87,13 +119,13 @@ pub fn App() -> impl IntoView {
                     "Repeat Sentence"
                     <span class="ml-2 text-sm font-normal text-zinc-500">"PTE Core practice"</span>
                 </h1>
-                <nav class="flex gap-1 rounded-full bg-zinc-200/70 p-1 dark:bg-zinc-800">
+                <nav class="flex max-w-full gap-1 overflow-x-auto rounded-full bg-zinc-200/70 p-1 dark:bg-zinc-800">
                     {Tab::ALL
                         .into_iter()
                         .map(|t| {
                             view! {
                                 <button
-                                    class="rounded-full px-3 py-1.5 text-sm font-medium text-zinc-600 dark:text-zinc-300"
+                                    class="shrink-0 rounded-full px-2.5 py-1.5 text-sm font-medium text-zinc-600 sm:px-3 dark:text-zinc-300"
                                     class=(
                                         [
                                             "bg-white",
@@ -139,13 +171,16 @@ pub fn App() -> impl IntoView {
                 <div class:hidden=move || tab.get() != Tab::Voices>
                     <Voices />
                 </div>
+                <div class:hidden=move || tab.get() != Tab::History>
+                    <HistoryTab />
+                </div>
                 <div class:hidden=move || tab.get() != Tab::Settings>
                     <SettingsTab />
                 </div>
             </main>
 
             <footer class="text-center text-xs text-zinc-500">
-                "Everything stays in your browser — recordings are never uploaded. "
+                "Everything stays in your browser — recordings and history are never uploaded. "
                 <a class="underline" href="https://github.com/shogotsuneto/repeat-sentence">
                     "Source"
                 </a>

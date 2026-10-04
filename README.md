@@ -12,7 +12,9 @@ A browser app for practising the **Repeat Sentence** task of PTE Core, built wit
 - Sentences are drawn without repeats until the whole pool has been used
 - Sentence text stays hidden until your attempt is over; replay the prompt, play back or download your recording, record again
 - Keyboard: <kbd>Space</kbd> start / next / stop recording, <kbd>Esc</kbd> stop
-- Settings, voice presets and imported sentences persist in `localStorage`. Recordings live only in memory and are never uploaded.
+- **History**: every attempt (sentence, voice, rate, length, time) and its recording is saved on the device in IndexedDB — replay or download past answers, see per-sentence practice counts, delete individual attempts or everything
+- The microphone is held only while recording, so earphones can switch devices freely between questions
+- Settings, voice presets and imported sentences persist in `localStorage`. Nothing is ever uploaded.
 
 Available voices depend on the browser and OS (Chrome and Edge offer high-quality online voices; Safari uses the system voices).
 

@@ -24,3 +24,4 @@ target
 /dist
 
 .claude
+.DS_Store
