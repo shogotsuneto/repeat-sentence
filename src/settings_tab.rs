@@ -40,6 +40,41 @@ fn NumberField(
     }
 }
 
+/// Like `NumberField`, but edits a millisecond field in seconds with
+/// half-second steps.
+#[component]
+fn SecondsField(
+    #[prop(into)] label: String,
+    #[prop(into)] hint: String,
+    max_ms: u32,
+    get: fn(&Settings) -> u32,
+    set: fn(&mut Settings, u32),
+) -> impl IntoView {
+    let app = expect_context::<AppState>();
+    view! {
+        <label class="flex items-center justify-between gap-4">
+            <span>
+                <span class="block text-sm font-medium">{label}</span>
+                <span class=format!("block {MUTED}")>{hint}</span>
+            </span>
+            <input
+                type="number"
+                class=format!("{INPUT} w-20 text-right")
+                min="0"
+                max=f64::from(max_ms) / 1000.0
+                step="0.5"
+                prop:value=move || (f64::from(app.settings.with(get)) / 1000.0).to_string()
+                on:change=move |ev| {
+                    if let Ok(secs) = event_target_value(&ev).parse::<f64>() {
+                        let ms = (secs.max(0.0) * 1000.0).round() as u32;
+                        app.settings.update(|s| set(s, ms.min(max_ms)));
+                    }
+                }
+            />
+        </label>
+    }
+}
+
 #[component]
 pub fn SettingsTab() -> impl IntoView {
     let app = expect_context::<AppState>();
@@ -54,6 +89,13 @@ pub fn SettingsTab() -> impl IntoView {
                     hint="Like the exam: the microphone opens as soon as the sentence ends."
                     checked=Signal::derive(move || s.with(|s| s.auto_record))
                     on_change=Callback::new(move |v| s.update(|s| s.auto_record = v))
+                />
+                <SecondsField
+                    label="Delay before recording (s)"
+                    hint="Pause between the end of the sentence and the beep / start of recording."
+                    max_ms=10_000
+                    get=|s| s.record_delay_ms
+                    set=|s, v| s.record_delay_ms = v
                 />
                 <Toggle
                     label="Beep before recording"

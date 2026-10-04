@@ -181,6 +181,7 @@ impl Session {
         let result = audio::record(
             settings.max_record_secs * 1000,
             settings.silence_stop_secs * 1000,
+            settings.record_delay_ms,
             if settings.beep { 120 } else { 0 },
             move || phase.set(Phase::Recording),
             move |lvl, el, si| {
