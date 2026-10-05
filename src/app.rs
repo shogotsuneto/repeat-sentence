@@ -177,7 +177,7 @@ pub fn App() -> impl IntoView {
         state.settings.with_untracked(|s| s.kokoro_enabled),
         state.settings.with_untracked(|s| s.auto_record),
     ));
-    let crash = RwSignal::new(diag::previous_crash());
+    let previous_end = RwSignal::new(diag::previous_end());
 
     let tab = RwSignal::new(Tab::Practice);
     let speech_ok = audio::speech_supported();
@@ -220,37 +220,68 @@ pub fn App() -> impl IntoView {
             </header>
 
             {move || {
-                crash
+                previous_end
                     .get()
-                    .map(|c| {
+                    .map(|end| {
                         let at = |ms: f64| {
                             String::from(
                                 js_sys::Date::new(&ms.into()).to_locale_time_string("en-GB"),
                             )
                         };
-                        view! {
-                            <div class="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-                                <p class="flex-1">
-                                    {format!(
-                                        "The previous session (started {}) ended unexpectedly around {} — usually the browser reloading the page, e.g. when it runs low on memory. Last event: {}. ",
-                                        at(c.started_at),
-                                        at(c.last_event_at),
-                                        if c.last_event.is_empty() { "none" } else { &c.last_event },
-                                    )}
-                                    <button
-                                        class="underline"
-                                        on:click=move |_| tab.set(Tab::Settings)
-                                    >
-                                        "See Settings → Diagnostics"
-                                    </button>
-                                </p>
-                                <button
-                                    class="shrink-0 font-medium"
-                                    on:click=move |_| crash.set(None)
-                                >
-                                    "✕"
-                                </button>
-                            </div>
+                        let dismiss = view! {
+                            <button
+                                class="shrink-0 font-medium"
+                                on:click=move |_| previous_end.set(None)
+                            >
+                                "✕"
+                            </button>
+                        };
+                        match end.kind {
+                            diag::EndKind::Background => {
+                                // Expected on iOS: not an error, but explains why the
+                                // session list is empty.
+                                view! {
+                                    <div class="flex items-start gap-3 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
+                                        <p class="flex-1">
+                                            "The app was closed while it was in the background (iOS does this to free memory), so “This session” starts empty. Your attempts are saved in "
+                                            <button
+                                                class="underline"
+                                                on:click=move |_| tab.set(Tab::History)
+                                            >
+                                                "History"
+                                            </button> "."
+                                        </p>
+                                        {dismiss}
+                                    </div>
+                                }
+                                    .into_any()
+                            }
+                            diag::EndKind::Crash => {
+                                view! {
+                                    <div class="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                                        <p class="flex-1">
+                                            {format!(
+                                                "The previous session (started {}) ended unexpectedly around {} while the app was on screen — usually the browser reloading the page, e.g. when it runs low on memory. Last event: {}. ",
+                                                at(end.started_at),
+                                                at(end.last_event_at),
+                                                if end.last_event.is_empty() {
+                                                    "none"
+                                                } else {
+                                                    &end.last_event
+                                                },
+                                            )}
+                                            <button
+                                                class="underline"
+                                                on:click=move |_| tab.set(Tab::Settings)
+                                            >
+                                                "See Settings → Diagnostics"
+                                            </button>
+                                        </p>
+                                        {dismiss}
+                                    </div>
+                                }
+                                    .into_any()
+                            }
                         }
                     })
             }}

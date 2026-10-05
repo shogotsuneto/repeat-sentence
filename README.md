@@ -29,7 +29,7 @@ Plain text (`.txt`): one sentence per line. Blank lines and lines starting with 
 
 If the page goes blank or restarts with the session cleared (typical of iOS killing the tab when it runs low on memory — e.g. while loading a large Kokoro model):
 
-- **In the app**: the next load shows a banner, and *Settings → Diagnostics → Show event log* lists what happened before (phase changes, model loads with timings, errors, panics). The log is kept in `localStorage` so it survives the kill; *Copy* puts it on the clipboard.
+- **In the app**: if the page was killed while on screen, the next load shows a warning banner (being closed while in the background is normal on iOS and only gets a short notice), and *Settings → Diagnostics → Show event log* lists what happened before (phase changes, model loads with timings, errors, panics). The log is kept in `localStorage` so it survives the kill; *Copy* puts it on the clipboard.
 - **Safari Web Inspector**: on the iPhone enable *Settings → Apps → Safari → Advanced → Web Inspector*, connect it to a Mac, then in Safari on the Mac open *Develop → (iPhone) → the page*. Record *Timelines → Memory* while reproducing; if the inspector disconnects at the moment of the crash, the page's process was killed.
 
 ## Development

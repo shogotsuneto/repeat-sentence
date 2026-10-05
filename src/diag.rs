@@ -10,8 +10,8 @@ use wasm_bindgen::prelude::*;
 extern "C" {
     #[wasm_bindgen(js_name = log)]
     fn log_js(msg: &str);
-    #[wasm_bindgen(js_name = previousCrash)]
-    fn previous_crash_js() -> JsValue;
+    #[wasm_bindgen(js_name = previousEnd)]
+    fn previous_end_js() -> JsValue;
     #[wasm_bindgen(js_name = entriesText)]
     pub fn entries_text() -> String;
     #[wasm_bindgen(js_name = clearLog)]
@@ -22,17 +22,28 @@ pub fn log(msg: impl AsRef<str>) {
     log_js(msg.as_ref());
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EndKind {
+    /// Closed while hidden: iOS discards backgrounded pages and home-screen
+    /// apps without notice. Expected.
+    Background,
+    /// Killed while on screen (e.g. memory pressure).
+    Crash,
+}
+
 /// The previous page load, if it ended without a normal `pagehide`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PreviousCrash {
+pub struct PreviousEnd {
+    pub kind: EndKind,
     pub started_at: f64,
     pub last_event_at: f64,
     pub last_event: String,
 }
 
-pub fn previous_crash() -> Option<PreviousCrash> {
-    serde_wasm_bindgen::from_value(previous_crash_js())
+pub fn previous_end() -> Option<PreviousEnd> {
+    serde_wasm_bindgen::from_value(previous_end_js())
         .ok()
         .flatten()
 }
