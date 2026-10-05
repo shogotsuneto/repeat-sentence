@@ -301,8 +301,8 @@ impl Session {
         }
         match &result {
             Ok(Some(rec)) => diag::log(format!(
-                "recorded {} ms ({}, {})",
-                rec.duration_ms, rec.reason, rec.mime
+                "recorded {} ms ({}, {}; level unknown {} ms; audio context {})",
+                rec.duration_ms, rec.reason, rec.mime, rec.level_unknown_ms, rec.context_states
             )),
             Ok(None) => diag::log("recording cancelled"),
             Err(e) => diag::log(format!("recording failed: {e}")),
@@ -566,7 +566,7 @@ pub fn Practice() -> impl IntoView {
                     <div class="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
                         <div
                             class="h-full rounded-full bg-rose-500 transition-[width] duration-75"
-                            style:width=move || format!("{:.0}%", s.level.get() * 100.0)
+                            style:width=move || format!("{:.0}%", s.level.get().max(0.0) * 100.0)
                         ></div>
                     </div>
                     <div class="mt-1 h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800/50">
@@ -585,13 +585,17 @@ pub fn Practice() -> impl IntoView {
                     )>
                         {move || {
                             let (silent, limit) = (s.silent_ms.get(), silence_ms());
-                            (limit > 0 && silent >= 1000)
-                                .then(|| {
-                                    format!(
-                                        "Silence — auto-stop in {:.1}s",
-                                        limit.saturating_sub(silent) as f64 / 1000.0,
-                                    )
-                                })
+                            if s.level.get() < 0.0 {
+                                Some("Input level unavailable — auto-stop paused".to_string())
+                            } else {
+                                (limit > 0 && silent >= 1000)
+                                    .then(|| {
+                                        format!(
+                                            "Silence — auto-stop in {:.1}s",
+                                            limit.saturating_sub(silent) as f64 / 1000.0,
+                                        )
+                                    })
+                            }
                         }}
                     </p>
                 </div>

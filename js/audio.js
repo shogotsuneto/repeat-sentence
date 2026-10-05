@@ -286,12 +286,13 @@ async function beep(durationMs) {
 }
 
 // Waits `delayMs` after the prompt (opening the mic meanwhile), optionally
-// beeps, and records until `maxMs` passes,
-// `stopRecording` is called, or — when `silenceMs` > 0 — the input stays
-// silent for `silenceMs` (the exam closes the mic the same way). The mic is
-// released when it ends. `onStart()` fires when recording actually begins;
-// `onTick(level 0..1, elapsedMs, silentMs)` drives the meter. Resolves
-// `{ url, mime, durationMs, reason }`, or null when cancelled.
+// beeps, and records until `maxMs` passes, `stopRecording` is called, or —
+// when `silenceMs` > 0 — the input stays silent for `silenceMs` (the exam
+// closes the mic the same way). The mic is released when it ends.
+// `onStart()` fires when recording actually begins; `onTick(level, elapsedMs,
+// silentMs)` drives the meter, with level 0..1, or -1 while it's unknown.
+// Resolves `{ url, mime, durationMs, reason, levelUnknownMs, contextStates }`,
+// or null when cancelled.
 export async function record(maxMs, silenceMs, delayMs, beepMs, onStart, onTick) {
   if (active) active.finish("cancel");
   // Claim the slot before the awaits so a cancel during mic start-up lands.
@@ -346,6 +347,7 @@ export async function record(maxMs, silenceMs, delayMs, beepMs, onStart, onTick)
       else settle();
     };
     const settle = () => {
+      c.onstatechange = null;
       releaseIfIdle();
       if (failure) return reject(failure);
       if (reason === "cancel") return resolve(null);
@@ -356,6 +358,8 @@ export async function record(maxMs, silenceMs, delayMs, beepMs, onStart, onTick)
         mime,
         durationMs: Math.round(end - start),
         reason,
+        levelUnknownMs: unknownMs,
+        contextStates: [...states].join(","),
       });
     };
 
@@ -368,18 +372,44 @@ export async function record(maxMs, silenceMs, delayMs, beepMs, onStart, onTick)
       finish("error");
     };
 
+    // The level comes from Web Audio, separately from the recorder. If the
+    // AudioContext isn't running (e.g. iOS interrupts it when the mic
+    // switches Bluetooth earphones to call mode), the analyser gets nothing
+    // while the recording itself is fine. Treat that as "level unknown" —
+    // not silence — so auto-stop doesn't cut the answer off. A live mic is
+    // never exactly zero (there's always some noise), so until a non-zero
+    // sample arrives the level is unknown too.
+    let heard = false;
+    let lastResume = 0;
+    let unknownMs = 0;
+    const states = new Set([c.state]);
+    c.onstatechange = () => states.add(c.state);
     const timer = setInterval(() => {
+      const now = performance.now();
+      const elapsed = now - start;
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
-      for (const x of buf) sum += x * x;
-      const rms = Math.sqrt(sum / buf.length);
-      const now = performance.now();
-      if (rms > SILENCE_RMS) lastVoice = now;
-      const elapsed = now - start;
-      const silent = now - lastVoice;
-      onTick(Math.min(1, Math.sqrt(rms) * 2.5), elapsed, silent);
+      for (const x of buf) {
+        sum += x * x;
+        if (x !== 0) heard = true;
+      }
+      const running = c.state === "running";
+      if (!running && now - lastResume > 1000) {
+        lastResume = now;
+        c.resume().catch(() => {});
+      }
+      if (running && heard) {
+        const rms = Math.sqrt(sum / buf.length);
+        if (rms > SILENCE_RMS) lastVoice = now;
+        onTick(Math.min(1, Math.sqrt(rms) * 2.5), elapsed, now - lastVoice);
+      } else {
+        // Unknown: hold the silence clock rather than let it run.
+        lastVoice = now;
+        unknownMs += TICK_MS;
+        onTick(-1, elapsed, 0);
+      }
       if (elapsed >= maxMs) finish("timeout");
-      else if (silenceMs > 0 && silent >= silenceMs) finish("silence");
+      else if (silenceMs > 0 && now - lastVoice >= silenceMs) finish("silence");
     }, TICK_MS);
 
     active = { recorder, finish };
