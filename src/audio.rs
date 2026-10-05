@@ -57,6 +57,14 @@ pub struct Recording {
     pub duration_ms: u32,
     /// Why it stopped: `manual`, `timeout` or `silence`.
     pub reason: String,
+    /// How long the input level couldn't be read (AudioContext not running
+    /// or no signal yet); silence auto-stop is paused meanwhile.
+    #[serde(default)]
+    pub level_unknown_ms: u32,
+    /// AudioContext states seen while recording, e.g. `running` or
+    /// `running,interrupted` — for the diagnostics log.
+    #[serde(default)]
+    pub context_states: String,
 }
 
 pub(crate) fn js_error(e: JsValue) -> String {
@@ -114,8 +122,9 @@ pub async fn prime() -> Result<(), String> {
 /// (0 = no beep), then records until
 /// stopped, timed out, or silent for `silence_ms` (0 = never). The mic is
 /// held only for the duration of this call. `on_start` fires when recording
-/// begins; `on_tick(level, elapsed_ms, silent_ms)` every ~50 ms after.
-/// `Ok(None)` means it was cancelled and nothing was kept.
+/// begins; `on_tick(level, elapsed_ms, silent_ms)` every ~50 ms after, with
+/// `level` < 0 while the input level can't be read (silence auto-stop is
+/// paused then). `Ok(None)` means it was cancelled and nothing was kept.
 pub async fn record(
     max_ms: u32,
     silence_ms: u32,

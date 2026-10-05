@@ -96,3 +96,44 @@ test("pressing Next never reveals the next sentence before it is attempted", asy
   expect(second.text).not.toBe(first.text);
   expect(shown).toEqual([first.text]); // the second sentence never appeared
 });
+
+test("doesn't treat a dead level meter as silence", async ({ page }) => {
+  await page.goto("/");
+  // Simulate the analyser receiving nothing (e.g. an AudioContext iOS has
+  // interrupted while the recorder itself keeps capturing).
+  await page.evaluate(() => {
+    AnalyserNode.prototype.getFloatTimeDomainData = function (buf: Float32Array) {
+      buf.fill(0);
+    };
+  });
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(status(page)).toContainText("Recording", { timeout: 10_000 });
+  await expect(page.getByText(/Input level unavailable/)).toBeVisible();
+  await page.waitForTimeout(4_500); // past the 3 s silence limit
+  await expect(status(page)).toContainText("Recording");
+
+  await page.keyboard.press("Space");
+  await expect(status(page)).toHaveText("Review");
+  await expect(page.getByText(/stopped manually/).first()).toBeVisible();
+});
+
+test("keeps recording while the audio context is interrupted, and logs it", async ({ page }) => {
+  await page.goto("/");
+  // iOS reports "interrupted" when the audio session is taken over, e.g. by
+  // Bluetooth earphones switching to call mode as the mic opens.
+  await page.evaluate(() => {
+    Object.defineProperty(BaseAudioContext.prototype, "state", { get: () => "interrupted" });
+    BaseAudioContext.prototype.resume = () => Promise.resolve();
+  });
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(status(page)).toContainText("Recording", { timeout: 10_000 });
+  await expect(page.getByText(/Input level unavailable/)).toBeVisible();
+  await page.waitForTimeout(4_500);
+  await expect(status(page)).toContainText("Recording");
+  await page.keyboard.press("Space");
+  await expect(status(page)).toHaveText("Review");
+
+  await openTab(page, "Settings");
+  await page.getByText("Show event log").click();
+  await expect(page.locator("pre")).toContainText(/recorded \d+ ms \(manual, .*level unknown \d+ ms; audio context interrupted\)/);
+});
