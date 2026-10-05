@@ -37,15 +37,25 @@ export function log(msg) {
 }
 
 // The previous page load's session, if it never recorded a normal end
-// (`pagehide`). A kill while backgrounded also looks like this — the log
-// shows whether the page was hidden at the time.
+// (`pagehide`). `kind` tells the two ways that happens apart:
+// - "background": it was hidden at the time. iOS routinely discards
+//   backgrounded pages / home-screen apps to save memory, without
+//   `pagehide` — expected, not a crash.
+// - "crash": it was on screen, i.e. the page was killed while in use
+//   (e.g. memory pressure).
 const previous = read(SESSION_KEY, null);
-const crashed = previous && !previous.ended ? previous : null;
+const ended = previous && !previous.ended ? previous : null;
+const endKind = ended?.hidden ? "background" : "crash";
 
-export function previousCrash() {
-  if (!crashed) return null;
-  const last = entries.filter((e) => e.s === crashed.id).at(-1);
-  return { startedAt: crashed.id, lastEventAt: last?.t ?? crashed.id, lastEvent: last?.m ?? "" };
+export function previousEnd() {
+  if (!ended) return null;
+  const last = entries.filter((e) => e.s === ended.id).at(-1);
+  return {
+    kind: endKind,
+    startedAt: ended.id,
+    lastEventAt: last?.t ?? ended.id,
+    lastEvent: last?.m ?? "",
+  };
 }
 
 export function entriesText() {
@@ -70,20 +80,35 @@ function memory() {
 }
 
 // --- session bookkeeping & global hooks ---
-write(SESSION_KEY, { id: sessionId, ended: false });
-if (crashed) {
-  log(`previous session (${new Date(crashed.id).toLocaleTimeString()}) ended unexpectedly`);
+const session = { id: sessionId, ended: false, hidden: document.visibilityState === "hidden" };
+const saveSession = () => write(SESSION_KEY, session);
+saveSession();
+if (ended) {
+  const at = new Date(ended.id).toLocaleTimeString();
+  log(
+    endKind === "background"
+      ? `previous session (${at}) was closed while in the background`
+      : `previous session (${at}) ended unexpectedly`,
+  );
 }
 log(`start ${navigator.userAgent}${memory()}`);
 
 addEventListener("pagehide", (e) => {
   log(`pagehide persisted=${e.persisted}`);
-  write(SESSION_KEY, { id: sessionId, ended: true });
+  session.ended = true;
+  saveSession();
 });
 // Coming back from the back/forward cache is still the same session.
 addEventListener("pageshow", (e) => {
-  if (e.persisted) write(SESSION_KEY, { id: sessionId, ended: false });
+  if (e.persisted) {
+    session.ended = false;
+    saveSession();
+  }
 });
-document.addEventListener("visibilitychange", () => log(`visibility ${document.visibilityState}${memory()}`));
+document.addEventListener("visibilitychange", () => {
+  session.hidden = document.visibilityState === "hidden";
+  saveSession();
+  log(`visibility ${document.visibilityState}${memory()}`);
+});
 addEventListener("error", (e) => log(`error ${e.message} @ ${e.filename}:${e.lineno}`));
 addEventListener("unhandledrejection", (e) => log(`unhandled rejection ${e.reason?.stack ?? e.reason}`));
