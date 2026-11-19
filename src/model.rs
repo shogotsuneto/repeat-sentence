@@ -332,6 +332,16 @@ pub enum Reveal {
     Always,
 }
 
+/// How the next sentence is chosen from the pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Order {
+    /// Shuffled, every sentence once before any repeats (`ShuffleBag`).
+    #[default]
+    Random,
+    /// Pool order, top to bottom, wrapping around (`next_in_order`).
+    Sequential,
+}
+
 /// Persisted user settings. `#[serde(default)]` keeps older stored records
 /// loadable when fields are added.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -355,6 +365,7 @@ pub struct Settings {
     /// the app loads it again in the background on later visits.
     pub kokoro_enabled: bool,
     pub reveal: Reveal,
+    pub order: Order,
 }
 
 impl Default for Settings {
@@ -373,6 +384,7 @@ impl Default for Settings {
             kokoro_backend: KokoroBackend::Auto,
             kokoro_enabled: false,
             reveal: Reveal::AfterAttempt,
+            order: Order::Random,
         }
     }
 }
@@ -488,6 +500,18 @@ impl ShuffleBag {
     }
 }
 
+/// The pool index after the sentence whose text is `last` (wrapping
+/// around), or the first one when `last` is unknown or no longer in the pool.
+/// Keyed on text rather than an index so the position survives reloads and
+/// sets being added / removed.
+pub fn next_in_order(pool: &[PoolEntry], last: Option<&str>) -> Option<usize> {
+    if pool.is_empty() {
+        return None;
+    }
+    let pos = last.and_then(|t| pool.iter().position(|e| e.text == t));
+    Some(pos.map_or(0, |i| (i + 1) % pool.len()))
+}
+
 /// Uniform index in `0..len` from a `[0, 1)` random source. `len` must be > 0.
 pub fn pick_index(len: usize, rand: &mut impl FnMut() -> f64) -> usize {
     ((rand() * len as f64) as usize).min(len - 1)
@@ -521,6 +545,22 @@ mod tests {
             lang: lang.into(),
             local: true,
         }
+    }
+
+    #[test]
+    fn next_in_order_walks_the_pool_and_wraps() {
+        let pool: Vec<PoolEntry> = ["a", "b", "c"]
+            .iter()
+            .map(|t| PoolEntry {
+                text: t.to_string(),
+                source: String::new(),
+            })
+            .collect();
+        assert_eq!(next_in_order(&pool, None), Some(0));
+        assert_eq!(next_in_order(&pool, Some("a")), Some(1));
+        assert_eq!(next_in_order(&pool, Some("c")), Some(0));
+        assert_eq!(next_in_order(&pool, Some("gone")), Some(0));
+        assert_eq!(next_in_order(&[], Some("a")), None);
     }
 
     #[test]
