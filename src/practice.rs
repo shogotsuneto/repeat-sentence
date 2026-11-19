@@ -8,7 +8,8 @@ use leptos::task::spawn_local;
 
 use crate::app::AppState;
 use crate::model::{
-    AttemptRecord, Engine, PoolEntry, Reveal, ShuffleBag, pick_index, sentence_pool,
+    AttemptRecord, Engine, Order, PoolEntry, Reveal, ShuffleBag, next_in_order, pick_index,
+    sentence_pool,
 };
 use crate::ui::{BADGE, BTN, BTN_PRIMARY, BTN_SMALL, CARD, MUTED, clock, rate_label};
 use crate::{audio, diag, history, kokoro};
@@ -87,12 +88,30 @@ impl Session {
     fn pick(self) -> Option<Item> {
         let mut rand = js_sys::Math::random;
         let pool = self.pool.get_untracked();
-        let mut idx = None;
-        self.bag
-            .update_value(|b| idx = b.next(pool.len(), &mut rand));
+        let settings = self.app.settings.get_untracked();
+        let idx = match settings.order {
+            Order::Random => {
+                let mut idx = None;
+                self.bag
+                    .update_value(|b| idx = b.next(pool.len(), &mut rand));
+                idx
+            }
+            // Continue after the current sentence, or — on a fresh load —
+            // after the last one practised.
+            Order::Sequential => {
+                let last = self
+                    .item
+                    .with_untracked(|i| i.as_ref().map(|i| i.text.clone()));
+                let last = last.or_else(|| {
+                    self.app
+                        .history
+                        .with_untracked(|h| h.first().map(|r| r.text.clone()))
+                });
+                next_in_order(&pool, last.as_deref())
+            }
+        };
         let entry = pool.get(idx?)?.clone();
 
-        let settings = self.app.settings.get_untracked();
         let voices = self.app.voices.get_untracked();
         // Presets whose voice this browser lacks (e.g. created on another
         // device) are skipped. Before voices load, trust them all. Kokoro

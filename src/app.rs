@@ -188,10 +188,7 @@ pub fn App() -> impl IntoView {
     view! {
         <div class="mx-auto flex min-h-dvh max-w-3xl flex-col gap-6 px-4 py-6">
             <header class="flex flex-wrap items-center justify-between gap-3">
-                <h1 class="text-xl font-bold tracking-tight">
-                    "Repeat Sentence"
-                    <span class="ml-2 text-sm font-normal text-zinc-500">"PTE Core practice"</span>
-                </h1>
+                <h1 class="text-xl font-bold tracking-tight">"Repeat Sentence"</h1>
                 <nav class="flex max-w-full gap-1 overflow-x-auto rounded-full bg-zinc-200/70 p-1 dark:bg-zinc-800">
                     {Tab::ALL
                         .into_iter()

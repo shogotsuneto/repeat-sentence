@@ -4,7 +4,7 @@ use leptos::prelude::*;
 
 use crate::app::AppState;
 use crate::diag;
-use crate::model::{Reveal, Settings};
+use crate::model::{Order, Reveal, Settings};
 use crate::ui::{BTN_DANGER, BTN_SMALL, CARD, HEADING, INPUT, MUTED, Toggle};
 
 /// A number input bound to one `u32` field of `Settings`, clamped to
@@ -131,6 +131,16 @@ pub fn SettingsTab() -> impl IntoView {
                     max=10
                     get=|s| s.pre_delay_secs
                     set=|s, v| s.pre_delay_secs = v
+                />
+                <Toggle
+                    label="Play sentences in order"
+                    hint="Goes through the enabled sentences top to bottom, continuing after the last one you practised. Off: random order, no repeats until all have come up."
+                    checked=Signal::derive(move || s.with(|s| s.order == Order::Sequential))
+                    on_change=Callback::new(move |v: bool| {
+                        s.update(|s| {
+                            s.order = if v { Order::Sequential } else { Order::Random };
+                        })
+                    })
                 />
                 <Toggle
                     label="Show the sentence while listening"

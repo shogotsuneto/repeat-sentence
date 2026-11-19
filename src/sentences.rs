@@ -1,6 +1,6 @@
 // Built-in practice sentences and the parser for user-imported text.
 
-/// Original sentences in the style of PTE Repeat Sentence items: short
+/// Original sentences in the style of "repeat sentence" exam items: short
 /// academic / campus-life statements of roughly 3–9 seconds when read aloud.
 pub const BUILTIN: &[&str] = &[
     "The library will be closed on Sunday for scheduled maintenance.",

@@ -137,3 +137,33 @@ test("keeps recording while the audio context is interrupted, and logs it", asyn
   await page.getByText("Show event log").click();
   await expect(page.locator("pre")).toContainText(/recorded \d+ ms \(manual, .*level unknown \d+ ms; audio context interrupted\)/);
 });
+
+test("in-order mode walks the pool from the top and continues after a reload", async ({ page, spoken }) => {
+  const first = "The library will be closed on Sunday for scheduled maintenance.";
+  const second = "Students must submit their assignments before the end of the week.";
+  const third = "The lecture on climate change has been moved to the main auditorium.";
+
+  await page.goto("/");
+  await openTab(page, "Settings");
+  await page.getByLabel("Play sentences in order").check();
+  await openTab(page, "Practice");
+
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(status(page)).toContainText("Recording", { timeout: 10_000 });
+  await page.keyboard.press("Space");
+  await expect(status(page)).toHaveText("Review");
+  await page.keyboard.press("Space"); // next
+  await expect(status(page)).toContainText("Recording", { timeout: 10_000 });
+  await page.keyboard.press("Space");
+  await expect(status(page)).toHaveText("Review");
+  expect((await spoken()).map((u) => u.text)).toEqual([first, second]);
+
+  // After a reload it picks up after the last sentence in history.
+  await page.reload();
+  await openTab(page, "History");
+  await expect(panel(page).getByText(second, { exact: true })).toBeVisible();
+  await openTab(page, "Practice");
+  await page.getByRole("button", { name: "Start" }).click();
+  await expect(status(page)).toContainText("Recording", { timeout: 10_000 });
+  expect((await spoken()).map((u) => u.text)).toEqual([third]);
+});

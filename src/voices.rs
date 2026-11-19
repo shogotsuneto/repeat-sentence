@@ -81,9 +81,7 @@ fn RateSlider(#[prop(into)] id: String, rate: RwSignal<f32>) -> impl IntoView {
                     }
                 }
             />
-            <p class=MUTED>
-                "PTE speakers talk at a natural pace; 0.9×–1.1× covers most of it."
-            </p>
+            <p class=MUTED>"Natural speech is around 1×; 0.9×–1.1× covers most speakers."</p>
         </div>
     }
 }
